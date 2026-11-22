@@ -32,7 +32,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 from agent.config import CONFIG_NAMES, HarnessConfig, get_config  # noqa: E402
-from agent.llm_player import LLMPlayer  # noqa: E402
+from agent.llm_player import LLMPlayer, component_versions  # noqa: E402
 from agent.ollama_client import (  # noqa: E402
     DEFAULT_KEEP_ALIVE,
     DEFAULT_MODEL,
@@ -78,6 +78,7 @@ def load_or_create_metadata(
             "harness_config": config.name,
             "prompt_version": PROMPT_VERSION,
             "parser_version": PARSER_VERSION,
+            **component_versions(config),
         }
         try:
             check_resume_compatible(metadata, expected)

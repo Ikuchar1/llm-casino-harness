@@ -5,7 +5,7 @@ import pytest
 import requests
 
 from agent.config import BASELINE, HarnessConfig, get_config
-from agent.llm_player import LLMPlayer
+from agent.llm_player import LLMPlayer, component_versions
 from agent.ollama_client import ChatReply, OllamaClient, OllamaUnavailableError
 from agent.prompt import ODDS_HEADER, SELF_EVAL_VERSION, build_system_prompt, build_user_prompt
 from agent.strategy_info import STRATEGY_INFO_VERSION, principles_block
@@ -78,6 +78,15 @@ def test_run_metadata_records_component_versions_only_when_on(name, expected):
     metadata = LLMPlayer(FakeChatClient([]), get_config(name)).run_metadata()
     assert {k: v for k, v in metadata.items() if k.endswith("_version")} == expected
     assert metadata["system_prompt"] == LLMPlayer(FakeChatClient([]), get_config(name)).system_prompt
+
+
+@pytest.mark.parametrize("name", ["baseline", "prob", "strat", "self", "prob_strat_self"])
+def test_component_versions_match_run_metadata_with_none_for_components_off(name):
+    # The run scripts' resume check uses these; None matches a key absent from metadata.
+    metadata = LLMPlayer(FakeChatClient([]), get_config(name)).run_metadata()
+    versions = component_versions(get_config(name))
+    assert set(versions) == {"strategy_info_version", "self_eval_version"}
+    assert all(metadata.get(key) == value for key, value in versions.items())
 
 
 def test_prob_config_sends_the_odds_block_and_logs_it():

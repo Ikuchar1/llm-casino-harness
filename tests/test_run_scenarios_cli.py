@@ -195,7 +195,41 @@ def test_self_config_scenarios_log_self_eval_and_its_version(tmp_path, monkeypat
     out = tmp_path / "run"
     assert run_main(module, monkeypatch, "--seed", "2026", "--out", str(out), "--limit", "3", "--config", "self") == 0
     metadata = json.loads((out / "metadata.json").read_text())
-    assert metadata["self_eval_version"] == "self-eval-v1"
+    assert metadata["self_eval_version"] == "self-eval-v2"
     assert "strategy_info_version" not in metadata
     rows = read_jsonl(out / "decisions.jsonl")
     assert rows and all("self_eval" in r and r["scenario_id"] for r in rows)
+
+
+def test_resume_refuses_an_older_self_eval_version(tmp_path, monkeypatch):
+    module = load_script()
+    fake_ollama(module, monkeypatch)
+    out = tmp_path / "run"
+    run_main(module, monkeypatch, "--seed", "2026", "--out", str(out), "--limit", "1", "--config", "self")
+    metadata = json.loads((out / "metadata.json").read_text())
+    metadata["self_eval_version"] = "self-eval-v1"
+    (out / "metadata.json").write_text(json.dumps(metadata))
+    with pytest.raises(SystemExit, match="self_eval_version"):
+        run_main(module, monkeypatch, "--seed", "2026", "--out", str(out), "--limit", "2", "--config", "self")
+
+
+def test_resume_refuses_an_older_strategy_info_version(tmp_path, monkeypatch):
+    module = load_script()
+    fake_ollama(module, monkeypatch)
+    out = tmp_path / "run"
+    run_main(module, monkeypatch, "--seed", "2026", "--out", str(out), "--limit", "1", "--config", "prob_strat_self")
+    metadata = json.loads((out / "metadata.json").read_text())
+    metadata["strategy_info_version"] = "strategy-info-v0"
+    (out / "metadata.json").write_text(json.dumps(metadata))
+    with pytest.raises(SystemExit, match="strategy_info_version"):
+        run_main(module, monkeypatch, "--seed", "2026", "--out", str(out), "--limit", "2", "--config", "prob_strat_self")
+
+
+@pytest.mark.parametrize("config", ["baseline", "prob_strat_self"])
+def test_resume_with_matching_component_versions_appends(tmp_path, monkeypatch, config):
+    module = load_script()
+    fake_ollama(module, monkeypatch)
+    out = tmp_path / "run"
+    run_main(module, monkeypatch, "--seed", "2026", "--out", str(out), "--limit", "1", "--config", config)
+    assert run_main(module, monkeypatch, "--seed", "2026", "--out", str(out), "--limit", "2", "--config", config) == 0
+    assert [h["hand_number"] for h in read_jsonl(out / "hands.jsonl")] == [1, 2]

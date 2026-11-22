@@ -67,16 +67,17 @@ def play(replies, shoe=HARD_17_VS_6, config=SELF):
 def test_recheck_prompt_names_the_first_action_and_asks_for_the_action_line():
     assert recheck_prompt("hit") == (
         "You chose hit. Before you commit, re-check that choice against the rules and your cards. "
-        "Then reply with your final answer as a final line of exactly the form "
-        "`ACTION: <one of the legal actions>`."
+        "Briefly explain your re-check, then give your final answer as a final line of exactly "
+        "the form `ACTION: <one of the legal actions>`."
     )
     assert recheck_prompt("hit") == RECHECK_PROMPT.format(first_action="hit")
 
 
 def test_recheck_prompt_after_an_invalid_first_reply():
     assert recheck_prompt(None) == RECHECK_PROMPT_INVALID == (
-        "Your reply did not contain a valid action. Re-check the rules and your cards, then reply with "
-        "your final answer as a final line of exactly the form `ACTION: <one of the legal actions>`."
+        "Your reply did not contain a valid action. Re-check the rules and your cards. Briefly explain "
+        "your re-check, then give your final answer as a final line of exactly the form "
+        "`ACTION: <one of the legal actions>`."
     )
 
 

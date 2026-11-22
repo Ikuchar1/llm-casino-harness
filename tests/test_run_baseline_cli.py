@@ -143,3 +143,48 @@ def test_unknown_config_is_rejected(tmp_path, monkeypatch):
     module = load_script()
     with pytest.raises(SystemExit):
         run_with(module, monkeypatch, tmp_path, "--config", "memory")
+
+
+# --- resume checks the component text versions -----------------------------------------
+
+
+def rewrite_metadata(out, **changes):
+    path = out / "metadata.json"
+    metadata = json.loads(path.read_text())
+    metadata.update(changes)
+    path.write_text(json.dumps(metadata))
+
+
+def test_resume_refuses_an_older_self_eval_version(tmp_path, monkeypatch):
+    module = load_script()
+    run_with(module, monkeypatch, tmp_path, "--config", "self")
+    rewrite_metadata(tmp_path / "run", self_eval_version="self-eval-v1")
+    with pytest.raises(SystemExit, match="self_eval_version"):
+        run_with(module, monkeypatch, tmp_path, "--config", "self")
+
+
+def test_resume_refuses_an_older_strategy_info_version(tmp_path, monkeypatch):
+    module = load_script()
+    run_with(module, monkeypatch, tmp_path, "--config", "prob_strat_self")
+    rewrite_metadata(tmp_path / "run", strategy_info_version="strategy-info-v0")
+    with pytest.raises(SystemExit, match="strategy_info_version"):
+        run_with(module, monkeypatch, tmp_path, "--config", "prob_strat_self")
+
+
+@pytest.mark.parametrize("config", ["self", "prob_strat_self"])
+def test_resume_accepts_matching_component_versions(tmp_path, monkeypatch, config):
+    module = load_script()
+    run_with(module, monkeypatch, tmp_path, "--config", config)
+    code, out = run_with(module, monkeypatch, tmp_path, "--config", config)
+    assert code == 0
+    assert len(json.loads((out / "metadata.json").read_text())["sessions"]) == 2
+
+
+def test_resume_of_a_baseline_run_without_component_version_keys_still_works(tmp_path, monkeypatch):
+    # Baseline runs (including those from before these keys existed) never record them.
+    module = load_script()
+    run_with(module, monkeypatch, tmp_path)
+    metadata = json.loads((tmp_path / "run" / "metadata.json").read_text())
+    assert "self_eval_version" not in metadata and "strategy_info_version" not in metadata
+    code, _ = run_with(module, monkeypatch, tmp_path)
+    assert code == 0

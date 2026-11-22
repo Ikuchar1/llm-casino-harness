@@ -69,6 +69,18 @@ class DecisionDetail:
     self_eval: Optional[SelfEvalDetail] = None  # only for self-evaluation configs
 
 
+def component_versions(config: HarnessConfig) -> dict[str, Any]:
+    """The component text versions a resumed run must match (None = component off, key absent).
+
+    Used by the run scripts' resume check, so a run started under older strategy
+    information or re-check texts is never silently continued under newer ones.
+    """
+    return {
+        "strategy_info_version": STRATEGY_INFO_VERSION if config.strategy_info else None,
+        "self_eval_version": SELF_EVAL_VERSION if config.self_evaluation else None,
+    }
+
+
 class LLMPlayer:
     """A blackjack Player backed by a chat model."""
 

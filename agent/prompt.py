@@ -39,14 +39,14 @@ FORMAT_INSTRUCTION = (
 # Self-evaluation: after the first reply, the same conversation continues with this
 # generic, content-free re-check (it names the first action, nothing else). Bump the
 # version if either text changes; it is recorded in the run metadata.
-SELF_EVAL_VERSION = "self-eval-v1"
+SELF_EVAL_VERSION = "self-eval-v2"
 RECHECK_PROMPT = (
     "You chose {first_action}. Before you commit, re-check that choice against the rules and your "
-    f"cards. Then reply with your final answer as {ACTION_LINE_FORM}."
+    f"cards. Briefly explain your re-check, then give your final answer as {ACTION_LINE_FORM}."
 )
 RECHECK_PROMPT_INVALID = (
-    "Your reply did not contain a valid action. Re-check the rules and your cards, then reply with "
-    f"your final answer as {ACTION_LINE_FORM}."
+    "Your reply did not contain a valid action. Re-check the rules and your cards. Briefly explain "
+    f"your re-check, then give your final answer as {ACTION_LINE_FORM}."
 )
 
 
