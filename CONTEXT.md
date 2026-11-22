@@ -11,7 +11,7 @@ Everything around the LLM that shapes its decisions: state presentation, tools, 
 _Avoid_: Wrapper, scaffold, framework
 
 **Harness component**:
-One toggleable piece of the harness: the probability tool, strategy information, memory, or self-evaluation.
+One toggleable piece of the harness: the probability tool, strategy information, memory, or self-evaluation. Memory applies to poker only, because the blackjack dealer has no patterns to learn.
 _Avoid_: Feature, module, plugin
 
 **Baseline**:
@@ -19,8 +19,24 @@ The harness configuration with every harness component off: game description, cu
 _Avoid_: Control, vanilla
 
 **Probability tool**:
-The harness component that gives the model computed odds for the current state, such as bust probability or the dealer's final-total distribution.
-_Avoid_: Calculation tool, calculator, odds tool
+The harness component that gives the model computed odds for the current state, such as bust probability or the dealer's final-total distribution. The harness supplies the odds in every decision prompt; the model does not call anything.
+_Avoid_: Calculation tool, calculator, odds tool, function calling
+
+**Strategy information**:
+The harness component that gives the model a short list of plain-language strategy principles that cover most, but not all, basic strategy cells. It is never the full chart.
+_Avoid_: Strategy chart, cheat sheet, hints
+
+**Self-evaluation**:
+The harness component in which, after each first answer, the model is asked with a generic, content-free prompt to re-check that answer before committing. The final answer is the one graded.
+_Avoid_: Reflexion, reflection, retry
+
+**Flip**:
+A decision where the self-evaluation final answer differs from the first answer: a fix if it goes from incorrect to correct, a break if it goes from correct to incorrect.
+_Avoid_: Change, revision
+
+**Covered cell**:
+A basic strategy cell whose correct action follows directly from the strategy information's principles; every other cell is uncovered.
+_Avoid_: Hinted hand, rule hand
 
 ### Blackjack
 
