@@ -14,9 +14,9 @@
 #   sbatch hcc/smoke_configs.sbatch qwen2.5:14b          # all six configs
 #   sbatch hcc/smoke_configs.sbatch qwen2.5:7b self      # only the listed configs
 # Outputs (model with ':' -> '-'):
-#   runs/hcc_smoke_<config>_<model>/            20 natural hands
-#   runs/hcc_smoke_scenarios_<config>_<model>/  first 10 scenarios
-# Re-using an output folder resumes it (0 new hands if finished): delete runs/hcc_smoke_* for a fresh smoke.
+#   runs/hcc_cfgsmoke_<config>_<model>/            20 natural hands
+#   runs/hcc_cfgsmoke_scenarios_<config>_<model>/  first 10 scenarios
+# Re-using an output folder resumes it (0 new hands if finished): delete runs/hcc_cfgsmoke_* for a fresh smoke.
 # (no `set -u`: module scripts may reference unset variables)
 set -eo pipefail
 
@@ -43,10 +43,10 @@ pull_if_missing "$MODEL"
 for CONFIG in "${CONFIGS[@]}"; do
     echo "=== $CONFIG: $HANDS hands at $(date) ==="
     "$PY" scripts/run_baseline.py --hands "$HANDS" --seed "$SEED" --model "$MODEL" --config "$CONFIG" \
-        --out "runs/hcc_smoke_${CONFIG}_${TAG}"
+        --out "runs/hcc_cfgsmoke_${CONFIG}_${TAG}"
     echo "=== $CONFIG: $SCENARIOS scenarios at $(date) ==="
     "$PY" scripts/run_scenarios.py --seed "$SEED" --model "$MODEL" --config "$CONFIG" --limit "$SCENARIOS" \
-        --out "runs/hcc_smoke_scenarios_${CONFIG}_${TAG}"
+        --out "runs/hcc_cfgsmoke_scenarios_${CONFIG}_${TAG}"
 done
 ollama ps  # "100% GPU" means the model ran on the GPU
 echo "=== done at $(date) ==="

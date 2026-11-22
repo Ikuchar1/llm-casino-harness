@@ -185,6 +185,73 @@ def test_pairing_refuses_different_seeds():
         pair_runs(natural_run([True]), natural_run([True], seed=7))
 
 
+# Stack fields as an HCC run records them (top level, plus "where" per session).
+STACK = {
+    "model_digest": "845dbda0ea48",
+    "prompt_version": "baseline-v3",
+    "parser_version": "parser-v2",
+    "ollama_version": "0.35.0",
+    "ollama_options": {"temperature": 0, "seed": 42, "num_predict": 400},
+    "gpus": ["Tesla P100-PCIE-16GB"],
+}
+
+
+def stacked_run(name="run", sessions=None, **overrides):
+    run = natural_run([True], name=name)
+    run.metadata.update(STACK)
+    run.metadata.update(overrides)
+    gpus = run.metadata.get("gpus")
+    run.metadata["sessions"] = sessions if sessions is not None else [
+        {"status": "completed", "hostname": f"{name}-node", "slurm_job_id": f"{name}-job", "gpus": gpus}]
+    run.metadata["hostname"], run.metadata["slurm_job_id"] = f"{name}-node", f"{name}-job"
+    return run
+
+
+def test_pairing_accepts_same_stack_on_different_nodes_and_jobs():
+    pairs = pair_runs(stacked_run("base"), stacked_run("conf"))
+    assert len(pairs.pairs) == 1
+
+
+def test_pairing_accepts_equal_ollama_options_in_another_key_order():
+    options = {"num_predict": 400, "seed": 42, "temperature": 0}
+    assert len(pair_runs(stacked_run("base"), stacked_run("conf", ollama_options=options)).pairs) == 1
+
+
+@pytest.mark.parametrize("field, value, label", [
+    ("model_digest", "deadbeef", "model digest"),
+    ("prompt_version", "baseline-v2", "prompt version"),
+    ("parser_version", "parser-v1", "parser version"),
+    ("ollama_version", "0.36.0", "Ollama version"),
+    ("ollama_options", {"temperature": 0, "seed": 7, "num_predict": 400}, "Ollama options"),
+    ("gpus", ["Tesla V100-PCIE-32GB"], "GPUs"),
+])
+def test_pairing_refuses_a_different_stack_field(field, value, label):
+    with pytest.raises(PairingError, match=label):
+        pair_runs(stacked_run("base"), stacked_run("conf", **{field: value}))
+
+
+def test_pairing_refuses_a_session_on_a_different_gpu():
+    sessions = [{"status": "interrupted", "gpus": ["Tesla V100-PCIE-32GB"]},
+                {"status": "completed", "gpus": ["Tesla P100-PCIE-16GB"]}]
+    with pytest.raises(PairingError, match="GPUs"):
+        pair_runs(stacked_run("base"), stacked_run("conf", sessions=sessions))
+
+
+@pytest.mark.parametrize("field", list(STACK))
+def test_pairing_skips_a_stack_field_missing_on_one_side(field):
+    old = stacked_run("base")
+    del old.metadata[field]
+    if field == "gpus":
+        old.metadata["sessions"] = [{"status": "completed"}]
+    assert len(pair_runs(old, stacked_run("conf")).pairs) == 1
+    assert len(pair_runs(stacked_run("conf"), old).pairs) == 1
+
+
+def test_pairing_skips_gpus_recorded_as_none():
+    mac = stacked_run("base", gpus=None)
+    assert len(pair_runs(mac, stacked_run("conf")).pairs) == 1
+
+
 def test_pairing_refuses_different_hand_counts():
     with pytest.raises(PairingError, match="hand"):
         pair_runs(natural_run([True, True]), natural_run([True, True, True]))

@@ -11,8 +11,10 @@ Pairing (see docs/ablation-plan.md, "Statistics"):
 A hand where only one side has a first decision is dropped and counted
 (`dropped`). A hand where neither side decided (a blackjack) is counted as
 `no_decision`; that is expected. Runs whose model, run seed, hand set or
-scenario set differ, or whose paired first decisions show different cards,
-cannot be paired and raise PairingError.
+scenario set differ, whose stack differs (model digest, prompt, parser, Ollama
+version or options, GPUs), or whose paired first decisions show different cards,
+cannot be paired and raise PairingError. A field missing on either side is
+skipped, so older run folders still pair.
 
 Statistics per comparison:
 - Discordant counts b (baseline correct, config wrong) and c (baseline wrong,
@@ -165,6 +167,31 @@ def _check_same(baseline: Run, config: Run, key: str, label: str) -> None:
         raise PairingError(f"cannot pair {baseline.name} with {config.name}: {label} differs ({left!r} vs {right!r})")
 
 
+# Software/hardware stack that must match for two temperature-0 runs to be comparable
+# (metadata key, label). Per-job fields (hostname, slurm_job_id, timestamps) are not compared.
+STACK_FIELDS = [
+    ("model_digest", "model digest"),
+    ("prompt_version", "prompt version"),
+    ("parser_version", "parser version"),
+    ("ollama_version", "Ollama version"),
+    ("ollama_options", "Ollama options"),
+]
+
+
+def _gpu_sets(run: Run) -> set[tuple[str, ...]] | None:
+    """Every GPU list the run was played on (top level plus each session); None if none recorded."""
+    sources = [run.metadata] + list(run.metadata.get("sessions") or [])
+    found = {tuple(s["gpus"]) for s in sources if s.get("gpus")}
+    return found or None
+
+
+def _check_same_gpus(baseline: Run, config: Run) -> None:
+    left, right = _gpu_sets(baseline), _gpu_sets(config)
+    if left is not None and right is not None and left != right:
+        raise PairingError(f"cannot pair {baseline.name} with {config.name}: GPUs differ "
+                           f"({sorted(left)!r} vs {sorted(right)!r})")
+
+
 def pair_runs(baseline: Run, config: Run) -> PairedRuns:
     """Pair two runs' first decisions; raise PairingError if the runs can't be paired."""
     kinds = run_kind(baseline), run_kind(config)
@@ -176,6 +203,9 @@ def pair_runs(baseline: Run, config: Run) -> PairedRuns:
     _check_same(baseline, config, "run_seed", "run seed")
     if kind == SCENARIO:
         _check_same(baseline, config, "scenario_set_version", "scenario set version")
+    for key, label in STACK_FIELDS:
+        _check_same(baseline, config, key, label)
+    _check_same_gpus(baseline, config)
 
     keys_base, keys_conf = _hand_keys(baseline), _hand_keys(config)
     if keys_base != keys_conf:

@@ -117,16 +117,16 @@ a resume). If a pull job fails, the jobs waiting on it stay pending with `Depend
 
 **Smoke** (`--smoke`): one `hcc/smoke_configs.sbatch` job per model (1.5 h limit) that runs every
 config for 20 natural hands and the first 10 scenarios, seed 2026, into
-`runs/hcc_smoke_<config>_<model>/` and `runs/hcc_smoke_scenarios_<config>_<model>/` (`:` in the
-model becomes `-`, e.g. `runs/hcc_smoke_self_qwen2.5-14b/`). Check each one:
+`runs/hcc_cfgsmoke_<config>_<model>/` and `runs/hcc_cfgsmoke_scenarios_<config>_<model>/` (`:` in the
+model becomes `-`, e.g. `runs/hcc_cfgsmoke_self_qwen2.5-14b/`). Check each one:
 
 ```bash
 less bj_smoke_cfg.<jobid>.out
-wc -l runs/hcc_smoke_*/hands.jsonl          # 20 per natural folder, 10 per scenario folder
-grep -c '"invalid": true' runs/hcc_smoke_*/decisions.jsonl
+wc -l runs/hcc_cfgsmoke_*/hands.jsonl          # 20 per natural folder, 10 per scenario folder
+grep -c '"invalid": true' runs/hcc_cfgsmoke_*/decisions.jsonl
 ```
 
-Delete `runs/hcc_smoke_*` before another smoke (re-using a folder resumes it).
+Delete `runs/hcc_cfgsmoke_*` before another smoke (re-using a folder resumes it).
 
 **Full runs**, once the smoke looks right:
 

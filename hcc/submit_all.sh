@@ -59,7 +59,7 @@ if [ "$SMOKE" -eq 1 ]; then
     for MODEL in qwen2.5:7b qwen2.5:14b; do
         JOB=$(submit --dependency="afterok:$(pull_job "$MODEL")" --job-name="bj_smoke_${MODEL//:/-}" \
             hcc/smoke_configs.sbatch "$MODEL")
-        echo "smoke  $MODEL (all 6 configs) -> job $JOB  (runs/hcc_smoke_<config>_${MODEL//:/-})"
+        echo "smoke  $MODEL (all 6 configs) -> job $JOB  (runs/hcc_cfgsmoke_<config>_${MODEL//:/-})"
     done
     exit 0
 fi
