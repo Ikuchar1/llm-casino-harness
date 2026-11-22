@@ -38,3 +38,12 @@ Milestone 2 material lives in `NOTES_FOR_PAPER.md` (frozen).
   Reproducing our numbers requires pinning the Ollama version and the hardware, not only the
   model digest, seed and temperature. Run metadata now records hostname, OS, GPU names and the
   SLURM job id for this reason.
+
+## 2026-11-22 — HCC v3 reference runs (P100, qwen2.5:7b, seed 2026)
+
+- Baseline (1000 natural hands): 506/1240 correct (40.8%, Wilson 95% CI ~38.1–43.6%), 6 invalid, EV loss 0.322/decision.
+  Mac v2 (Milestone 2): 41.7% (38.9–44.6%), 9 invalid, EV loss 0.33. No meaningful difference.
+- Scenario set (330 cells): 149/330 correct (45.2%, CI ~39.9–50.6%), 0 invalid, EV loss 0.230/decision.
+  Mac v2 (Milestone 2): 40.9% (35.7–46.3%), 9 invalid, EV loss 0.27. Up ~4 points, but CIs overlap.
+- Caveat: these differ from Milestone 2 in BOTH prompt (v2→v3) and machine (Mac→HCC), so the change can't be credited to the v3 peek line alone.
+- These two runs are the reference for every ablation config.
