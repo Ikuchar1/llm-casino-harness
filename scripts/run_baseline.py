@@ -28,7 +28,6 @@ sys.path.insert(0, str(REPO_ROOT))
 from agent.config import BASELINE  # noqa: E402
 from agent.llm_player import LLMPlayer  # noqa: E402
 from agent.ollama_client import (  # noqa: E402
-    DEFAULT_BASE_URL,
     DEFAULT_KEEP_ALIVE,
     DEFAULT_MODEL,
     DEFAULT_OPTIONS,
@@ -36,6 +35,7 @@ from agent.ollama_client import (  # noqa: E402
     OllamaUnavailableError,
     get_model_digest,
     get_ollama_version,
+    resolve_base_url,
 )
 from agent.parser import PARSER_VERSION  # noqa: E402
 from agent.prompt import PROMPT_VERSION, build_system_prompt  # noqa: E402
@@ -130,11 +130,12 @@ def main() -> int:
     out_dir, metadata = load_or_create_metadata(args.out, args)
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    ollama_url = resolve_base_url()  # OLLAMA_HOST if set, else localhost:11434
     try:
         digest = get_model_digest(args.model)
         ollama_version = get_ollama_version()
     except Exception as error:  # noqa: BLE001 - any failure here means Ollama isn't usable
-        print(f"ERROR: could not reach Ollama at {DEFAULT_BASE_URL}: {error}", file=sys.stderr)
+        print(f"ERROR: could not reach Ollama at {ollama_url}: {error}", file=sys.stderr)
         return 1
     if digest is None:
         print(f"ERROR: model {args.model!r} is not installed in Ollama (try: ollama pull {args.model})", file=sys.stderr)
@@ -147,7 +148,7 @@ def main() -> int:
     metadata.update({
         "model_digest": digest,
         "ollama_version": ollama_version,
-        "ollama_url": DEFAULT_BASE_URL,
+        "ollama_url": ollama_url,
         "ollama_options": DEFAULT_OPTIONS,
         "keep_alive": DEFAULT_KEEP_ALIVE,
         "rule_set": dataclasses.asdict(DEFAULT_RULES),

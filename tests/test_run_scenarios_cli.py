@@ -103,3 +103,14 @@ def test_resume_refuses_a_baseline_run_directory(tmp_path, monkeypatch):
     (out / "metadata.json").write_text(json.dumps(baseline_metadata))
     with pytest.raises(SystemExit, match="run_type"):
         run_main(module, monkeypatch, "--seed", "2026", "--out", str(out), "--limit", "1")
+
+
+def test_metadata_records_the_ollama_host_url(tmp_path, monkeypatch):
+    module = load_script()
+    fake_ollama(module, monkeypatch)
+    monkeypatch.setenv("OLLAMA_HOST", "127.0.0.1:20123")
+    out = tmp_path / "run"
+
+    assert run_main(module, monkeypatch, "--seed", "2026", "--out", str(out), "--limit", "1") == 0
+
+    assert json.loads((out / "metadata.json").read_text())["ollama_url"] == "http://127.0.0.1:20123"
