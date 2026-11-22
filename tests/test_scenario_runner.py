@@ -45,6 +45,16 @@ def run(tmp_path, scenarios, reply="Thinking.\nACTION: hit"):
     return client
 
 
+def test_scenario_runner_refuses_a_player_whose_config_differs_from_the_run_info(tmp_path):
+    import pytest
+
+    from agent.config import get_config
+
+    player = LLMPlayer(AlwaysReply("ACTION: stand"), get_config("prob"))
+    with pytest.raises(ValueError, match="harness config"):
+        run_scenarios(player, RunWriter(tmp_path), INFO, build_scenarios()[:1])
+
+
 def test_rows_have_baseline_fields_plus_scenario_fields(tmp_path):
     scenarios = build_scenarios()[:12]
     run(tmp_path, scenarios)

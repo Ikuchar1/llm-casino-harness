@@ -16,11 +16,21 @@
 
 # Full blackjack run on HCC Swan: 1000-hand baseline, then the 330-cell scenario set.
 # Submit from the repo root:
-#   sbatch hcc/full_run.sbatch                 # label v3, model qwen2.5:7b
-#   sbatch hcc/full_run.sbatch v3 qwen2.5:7b   # same, explicit
-# $1 = label (default v3), $2 = Ollama model tag (default qwen2.5:7b).
-# Outputs: runs/hcc_baseline_<label>_seed2026 and runs/hcc_scenarios_<label>_seed2026
-# (with _<model> appended, ':' replaced by '-', when a non-default model is given).
+#   sbatch hcc/full_run.sbatch                          # label v3, model qwen2.5:7b, config baseline
+#   sbatch hcc/full_run.sbatch v3 qwen2.5:7b            # same, explicit
+#   sbatch hcc/full_run.sbatch v3 qwen2.5:7b prob       # probability-tool config, 7b
+#   sbatch hcc/full_run.sbatch v3 qwen2.5:14b prob      # same config, 14b
+# Arguments are positional, so to pass a config give the label and model too:
+#   $1 = label (default v3)
+#   $2 = Ollama model tag (default qwen2.5:7b)
+#   $3 = harness config (default baseline; one of the names in agent/config.py:
+#        baseline, prob, prob_strat, prob_strat_self, strat, self)
+# Outputs: runs/hcc_baseline_<label>[_<config>]_seed2026[_<model>] and
+#          runs/hcc_scenarios_<label>[_<config>]_seed2026[_<model>]
+# _<config> is added for every config except baseline, and _<model> (':' replaced by '-')
+# for every model except qwen2.5:7b. So the defaults give exactly
+# runs/hcc_baseline_v3_seed2026 and runs/hcc_scenarios_v3_seed2026 (the existing baseline
+# run), and e.g. `v3 qwen2.5:7b prob` gives runs/hcc_baseline_v3_prob_seed2026.
 #
 # Resuming is a feature here: both scripts resume when --out already exists (hands
 # already in hands.jsonl are skipped). If the job hits the time limit, resubmit the
@@ -31,13 +41,18 @@ set -eo pipefail
 
 LABEL="${1:-v3}"
 MODEL="${2:-qwen2.5:7b}"
+CONFIG="${3:-baseline}"
 SEED=2026
 SUFFIX=""
 if [ "$MODEL" != "qwen2.5:7b" ]; then
     SUFFIX="_${MODEL//:/-}"
 fi
-BASELINE_OUT="runs/hcc_baseline_${LABEL}_seed${SEED}${SUFFIX}"
-SCENARIOS_OUT="runs/hcc_scenarios_${LABEL}_seed${SEED}${SUFFIX}"
+CONFIG_TAG=""
+if [ "$CONFIG" != "baseline" ]; then
+    CONFIG_TAG="_${CONFIG}"
+fi
+BASELINE_OUT="runs/hcc_baseline_${LABEL}${CONFIG_TAG}_seed${SEED}${SUFFIX}"
+SCENARIOS_OUT="runs/hcc_scenarios_${LABEL}${CONFIG_TAG}_seed${SEED}${SUFFIX}"
 
 cd "$SLURM_SUBMIT_DIR"
 
@@ -46,7 +61,7 @@ module purge
 module load ollama-gpu/0.15
 
 echo "=== job $SLURM_JOB_ID on $(hostname) at $(date) ==="
-echo "label $LABEL, model $MODEL, seed $SEED"
+echo "label $LABEL, model $MODEL, config $CONFIG, seed $SEED"
 echo "baseline -> $BASELINE_OUT"
 echo "scenarios -> $SCENARIOS_OUT"
 nvidia-smi
@@ -98,11 +113,11 @@ fi
 "$PY" --version
 
 echo "=== baseline: 1000 hands at $(date) ==="
-"$PY" scripts/run_baseline.py --hands 1000 --seed "$SEED" --model "$MODEL" --out "$BASELINE_OUT"
+"$PY" scripts/run_baseline.py --hands 1000 --seed "$SEED" --model "$MODEL" --config "$CONFIG" --out "$BASELINE_OUT"
 ollama ps  # shows whether the model ran on the GPU ("100% GPU") or fell back to CPU
 
 echo "=== scenarios: 330 cells at $(date) ==="
-"$PY" scripts/run_scenarios.py --seed "$SEED" --model "$MODEL" --out "$SCENARIOS_OUT"
+"$PY" scripts/run_scenarios.py --seed "$SEED" --model "$MODEL" --config "$CONFIG" --out "$SCENARIOS_OUT"
 ollama ps
 
 echo "=== done at $(date) ==="

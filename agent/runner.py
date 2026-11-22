@@ -26,6 +26,16 @@ class Progress:
     seconds_per_hand: float  # this session only
 
 
+def check_player_config(player: LLMPlayer, info: RunInfo) -> None:
+    """Raise ValueError if the player runs a different harness config than the rows will say."""
+    player_config = getattr(player, "config", None)
+    if player_config != info.harness_config:
+        raise ValueError(
+            f"player harness config {getattr(player_config, 'name', None)!r} does not match "
+            f"the run's harness config {info.harness_config.name!r}"
+        )
+
+
 def run_hands(
     player: LLMPlayer,
     writer: RunWriter,
@@ -39,6 +49,7 @@ def run_hands(
     Errors from the player (e.g. Ollama unreachable) propagate: the interrupted
     hand is not written, so a later resume replays it.
     """
+    check_player_config(player, info)
     hand_numbers = list(hand_numbers)
     done = writer.completed_hands()
     previous = writer.previous_decision_rows()

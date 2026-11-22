@@ -1,12 +1,18 @@
-"""Builds the baseline prompt: a system message with the rules and reply format,
-and a user message with the current decision state only.
+"""Builds the decision prompt: a system message with the rules and reply format,
+and a user message with the current decision state.
 
 Baseline means no strategy hints, no probabilities, and no history of earlier hands.
+Harness components add to this per config (see agent/config.py):
+- probability tool: an odds block in the user message (odds_lines);
+- strategy information: not built yet (it will most likely extend the system prompt;
+  see the TODO in agent/llm_player.py).
 """
 
+from agent.config import BASELINE, HarnessConfig
 from blackjack.cards import card_value
 from blackjack.engine import DecisionState
-from blackjack.rules import RuleSet
+from blackjack.odds import compute_odds
+from blackjack.rules import DEFAULT_RULES, RuleSet
 
 # Bump this whenever any prompt text changes, so runs made with different prompts
 # are never mixed (it is logged on every decision and checked on resume).
@@ -17,6 +23,9 @@ from blackjack.rules import RuleSet
 PROMPT_VERSION = "baseline-v3"
 
 PEEK_LINE = "Dealer checked for blackjack: no blackjack."
+
+# The probability tool's block heading. The baseline prompt never contains it.
+ODDS_HEADER = "Odds (worked out from the cards left in the shoe):"
 
 FORMAT_INSTRUCTION = (
     "First explain your reasoning in two or three sentences. Then end your reply with a "
@@ -72,12 +81,46 @@ def build_system_prompt(rules: RuleSet) -> str:
     return "\n".join(lines)
 
 
-def build_user_prompt(state: DecisionState) -> str:
-    """The current decision state only: cards, total, pair, split, upcard, peek result, legal actions.
+def build_user_prompt(state: DecisionState, config: HarnessConfig = BASELINE, rules: RuleSet = DEFAULT_RULES) -> str:
+    """The decision prompt: the state lines, then any per-decision harness blocks, then legal actions.
+
+    With the baseline config this is the current decision state only (cards, total,
+    pair, split, upcard, peek result, legal actions), byte-identical to baseline-v3.
+    With the probability tool on, an odds block goes between the state lines and the
+    legal actions.
 
     "Pair" means the two cards have equal value, even when splitting is no longer
     legal (after the one allowed split); the legal actions show whether split is offered.
     """
+    lines = _state_lines(state)
+    if config.probability_tool:
+        lines += ["", *odds_lines(state, rules), ""]
+    lines.append(f"Legal actions: {', '.join(state.legal_actions)}")
+    return "\n".join(lines)
+
+
+def odds_lines(state: DecisionState, rules: RuleSet = DEFAULT_RULES) -> list[str]:
+    """The probability tool's block: hit-once bust chance, dealer final totals, stand-now odds."""
+    odds = compute_odds(state.player_cards, state.dealer_upcard, rules)
+    dealer_label = "Dealer final total"
+    if card_value(state.dealer_upcard) in (10, 11):  # the dealer peeked, so the odds assume no blackjack
+        dealer_label += " (no blackjack)"
+    dealer = ", ".join(f"{outcome}: {_percent(p)}" for outcome, p in odds.dealer.items())
+    return [
+        ODDS_HEADER,
+        f"- If you hit once: {_percent(odds.bust_if_hit)} chance to bust.",
+        f"- {dealer_label}: {dealer}.",
+        f"- If you stand now: win {_percent(odds.stand_win)}, push {_percent(odds.stand_push)}, "
+        f"lose {_percent(odds.stand_lose)}.",
+    ]
+
+
+def _percent(p: float) -> str:
+    return f"{100 * p:.1f}%"
+
+
+def _state_lines(state: DecisionState) -> list[str]:
+    """Cards, total, pair, split, upcard and peek result (everything before the legal actions)."""
     softness = "soft" if state.is_soft else "hard"
     lines = [
         f"Your cards: {', '.join(state.player_cards)}",
@@ -90,8 +133,7 @@ def build_user_prompt(state: DecisionState) -> str:
     if card_value(state.dealer_upcard) in (10, 11):
         # The dealer peeks under a 10 or an ace, so reaching a decision means no blackjack.
         lines.append(PEEK_LINE)
-    lines.append(f"Legal actions: {', '.join(state.legal_actions)}")
-    return "\n".join(lines)
+    return lines
 
 
 def _is_pair(cards: tuple[str, ...]) -> bool:

@@ -4,9 +4,10 @@ import dataclasses
 
 import pytest
 
-from agent.config import BASELINE, HarnessConfig
+from agent.config import BASELINE, HarnessConfig, get_config
 from agent.prompt import FORMAT_INSTRUCTION, PROMPT_VERSION, build_system_prompt, build_user_prompt
 from blackjack.engine import DecisionState
+from blackjack.odds import compute_odds
 from blackjack.rules import DEFAULT_RULES
 
 
@@ -160,3 +161,66 @@ def test_user_prompt_full_text_for_16_vs_k():
 def test_prompts_contain_no_strategy_hints(word):
     text = (build_system_prompt(DEFAULT_RULES) + build_user_prompt(make_state())).lower()
     assert word not in text
+
+
+# --- Probability tool (prob on/off) ----------------------------------------------------
+
+PROB = get_config("prob")
+ODDS_HEADER = "Odds (worked out from the cards left in the shoe):"
+
+
+@pytest.mark.parametrize("upcard", ["6", "K", "A"])
+def test_baseline_config_prompt_is_unchanged(upcard):
+    state = make_state(dealer_upcard=upcard)
+    assert build_user_prompt(state, BASELINE) == build_user_prompt(state)
+    assert ODDS_HEADER not in build_user_prompt(state, BASELINE)
+
+
+def test_prob_prompt_full_text_for_16_vs_6():
+    odds = compute_odds(["10", "6"], "6")
+    d = {k: f"{100 * v:.1f}%" for k, v in odds.dealer.items()}
+    assert build_user_prompt(make_state(dealer_upcard="6"), PROB) == (
+        "Your cards: 10, 6\n"
+        "Your total: hard 16\n"
+        "Pair: no\n"
+        "Dealer upcard: 6\n"
+        "\n"
+        f"{ODDS_HEADER}\n"
+        f"- If you hit once: {100 * odds.bust_if_hit:.1f}% chance to bust.\n"
+        f"- Dealer final total: 17: {d[17]}, 18: {d[18]}, 19: {d[19]}, 20: {d[20]}, 21: {d[21]}, "
+        f"bust: {d['bust']}.\n"
+        f"- If you stand now: win {100 * odds.stand_win:.1f}%, push {100 * odds.stand_push:.1f}%, "
+        f"lose {100 * odds.stand_lose:.1f}%.\n"
+        "\n"
+        "Legal actions: hit, stand, double"
+    )
+
+
+def test_prob_prompt_uses_one_decimal_percentages():
+    text = build_user_prompt(make_state(dealer_upcard="6"), PROB)
+    assert "- If you hit once: 61.2% chance to bust." in text
+    assert "bust: 42.1%." in text
+
+
+def test_prob_prompt_under_a_ten_says_the_dealer_has_no_blackjack():
+    lines = build_user_prompt(make_state(dealer_upcard="K"), PROB).splitlines()
+    assert lines[3:5] == ["Dealer upcard: K", PEEK_LINE]
+    assert any(line.startswith("- Dealer final total (no blackjack): 17: ") for line in lines)
+
+
+def test_prob_prompt_soft_hand_cannot_bust():
+    state = make_state(player_cards=("A", "6"), total=17, is_soft=True, dealer_upcard="9")
+    assert "- If you hit once: 0.0% chance to bust." in build_user_prompt(state, PROB)
+
+
+def test_prob_prompt_split_hand_keeps_the_split_line_before_the_odds():
+    state = make_state(player_cards=("8", "3"), total=11, from_split=True, hand_index=1, dealer_upcard="5")
+    lines = build_user_prompt(state, PROB).splitlines()
+    assert lines.index("This hand came from a split (hand 2 of 2).") < lines.index(ODDS_HEADER)
+    assert lines[-1] == "Legal actions: hit, stand, double"
+
+
+@pytest.mark.parametrize("phrase", ["basic strategy", "recommend", "should", "chart", "expected value", " ev "])
+def test_prob_prompt_gives_odds_but_no_advice_or_ev(phrase):
+    text = build_user_prompt(make_state(dealer_upcard="6"), PROB).lower()
+    assert phrase not in text

@@ -1,10 +1,12 @@
 """Tests for per-decision / per-hand JSONL logging and resume (agent/run_log.py, agent/runner.py)."""
 
+import dataclasses
 import json
 
-from agent.config import BASELINE
+from agent.config import BASELINE, get_config
 from agent.llm_player import LLMPlayer
 from agent.ollama_client import ChatReply
+from agent.prompt import ODDS_HEADER
 import pytest
 
 from agent.run_log import DECISION_FIELDS, HAND_FIELDS, RunInfo, RunWriter, check_resume_compatible
@@ -45,6 +47,25 @@ def run(tmp_path, hands, reply="Thinking.\nACTION: stand"):
     client = AlwaysReply(reply)
     run_hands(LLMPlayer(client, BASELINE), writer, INFO, hand_numbers=hands)
     return client
+
+
+def test_runner_refuses_a_player_whose_config_differs_from_the_run_info(tmp_path):
+    player = LLMPlayer(AlwaysReply("ACTION: stand"), get_config("prob"))
+    with pytest.raises(ValueError, match="harness config"):
+        run_hands(player, RunWriter(tmp_path), INFO, hand_numbers=[1])
+
+
+def test_prob_run_logs_the_config_name_flags_and_odds_prompt(tmp_path):
+    prob = get_config("prob")
+    info = dataclasses.replace(INFO, harness_config=prob)
+    run_hands(LLMPlayer(AlwaysReply("ACTION: stand"), prob), RunWriter(tmp_path), info, hand_numbers=range(1, 4))
+    rows = read_jsonl(tmp_path / "decisions.jsonl")
+    assert rows
+    for row in rows:
+        assert row["harness_config"] == "prob"
+        assert row["harness_flags"]["probability_tool"] is True
+        assert ODDS_HEADER in row["prompt"]["user"]
+    assert {row["harness_config"] for row in read_jsonl(tmp_path / "hands.jsonl")} == {"prob"}
 
 
 def test_every_decision_row_has_every_field(tmp_path):

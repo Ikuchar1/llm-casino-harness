@@ -16,6 +16,11 @@ from agent.prompt import build_system_prompt, build_user_prompt
 from blackjack.engine import DecisionState
 from blackjack.rules import DEFAULT_RULES, RuleSet
 
+# Harness components the player can run. A config that switches on anything else
+# raises NotImplementedError (strategy information and self-evaluation are still to come;
+# memory is poker-only).
+BUILT_COMPONENTS = {"probability_tool"}
+
 
 @dataclass
 class DecisionDetail:
@@ -36,20 +41,30 @@ class LLMPlayer:
     """A blackjack Player backed by a chat model."""
 
     def __init__(self, client: ChatClient, config: HarnessConfig = BASELINE, rules: RuleSet = DEFAULT_RULES):
-        enabled = config.enabled_components()
-        if enabled:
-            raise NotImplementedError(f"Harness components not built yet: {', '.join(enabled)}")
+        unbuilt = [name for name in config.enabled_components() if name not in BUILT_COMPONENTS]
+        if unbuilt:
+            raise NotImplementedError(f"Harness components not built yet: {', '.join(unbuilt)}")
         self.client = client
         self.config = config
+        self.rules = rules
+        # HOOK (strategy information): when config.strategy_info is on, add the principles
+        # here, e.g. build_system_prompt(rules) + "\n\n" + <principles text>, then add
+        # "strategy_info" to BUILT_COMPONENTS. Baseline must keep the exact baseline-v3 text.
         self.system_prompt = build_system_prompt(rules)
         self._details: list[DecisionDetail] = []
 
     def decide(self, state: DecisionState) -> Optional[str]:
         """Ask the model, parse the reply, and return a legal action or None (invalid)."""
-        user_prompt = build_user_prompt(state)
+        user_prompt = build_user_prompt(state, self.config, self.rules)
         # Errors from the client (e.g. Ollama down) propagate and stop the run.
         reply = self.client.chat(self.system_prompt, user_prompt)
         result = parse_action(reply.content, state.legal_actions, reply.done_reason)
+        # HOOK (self-evaluation): when config.self_evaluation is on, continue the same
+        # conversation here with the generic re-check prompt (needs a multi-turn chat call
+        # on the client: system, user, assistant=reply.content, user=re-check), parse the
+        # second reply, and keep the first answer if the second is invalid (see
+        # docs/ablation-plan.md). Log both answers on DecisionDetail, then add
+        # "self_evaluation" to BUILT_COMPONENTS.
         self._details.append(
             DecisionDetail(
                 system_prompt=self.system_prompt,

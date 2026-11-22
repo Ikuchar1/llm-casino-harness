@@ -4,10 +4,11 @@
 import pytest
 import requests
 
-from agent.config import BASELINE, HarnessConfig
+from agent.config import BASELINE, HarnessConfig, get_config
 from agent.llm_player import LLMPlayer
 from agent.ollama_client import ChatReply, OllamaClient, OllamaUnavailableError
-from blackjack.engine import play_hand
+from agent.prompt import ODDS_HEADER, build_user_prompt
+from blackjack.engine import DecisionState, play_hand
 
 
 def stacked(player_cards, dealer_cards, draws=()):
@@ -38,6 +39,34 @@ class FakeChatClient:
 def test_enabling_any_component_is_not_implemented_yet():
     with pytest.raises(NotImplementedError):
         LLMPlayer(FakeChatClient([]), HarnessConfig("x", memory=True))
+
+
+@pytest.mark.parametrize("name", ["prob_strat", "prob_strat_self", "strat", "self"])
+def test_strategy_info_and_self_evaluation_configs_are_not_implemented_yet(name):
+    with pytest.raises(NotImplementedError):
+        LLMPlayer(FakeChatClient([]), get_config(name))
+
+
+def test_prob_config_sends_the_odds_block_and_logs_it():
+    client = FakeChatClient(["ACTION: stand"])
+    player = LLMPlayer(client, get_config("prob"))
+    play_hand(player, 1, 1, shoe=stacked(("10", "6"), ("6", "7")))
+
+    sent_user = client.calls[0][1]
+    assert sent_user == build_user_prompt(player_state(("10", "6"), "6"), get_config("prob"))
+    assert ODDS_HEADER in sent_user
+    assert player.take_hand_details()[0].user_prompt == sent_user
+
+
+def test_baseline_config_sends_no_odds_block():
+    client = FakeChatClient(["ACTION: stand"])
+    play_hand(LLMPlayer(client, BASELINE), 1, 1, shoe=stacked(("10", "6"), ("6", "7")))
+    assert ODDS_HEADER not in client.calls[0][1]
+
+
+def player_state(cards, upcard):
+    return DecisionState(player_cards=cards, total=16, is_soft=False, is_pair=False, dealer_upcard=upcard,
+                         legal_actions=("hit", "stand", "double"), hand_index=0, num_cards=2, from_split=False)
 
 
 def test_valid_reply_is_played():

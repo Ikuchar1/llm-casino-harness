@@ -3,6 +3,9 @@
 Usage (from the repo root):
     .venv/bin/python scripts/run_scenarios.py --seed 2026 --out runs/scenarios_seed2026
     .venv/bin/python scripts/run_scenarios.py --seed 2026 --out runs/scenarios_smoke --limit 5
+    .venv/bin/python scripts/run_scenarios.py --seed 2026 --config prob --limit 5
+
+Uses the same --config harness configs as scripts/run_baseline.py (default baseline).
 
 Uses the same model, prompt, parser and sampling as scripts/run_baseline.py. The
 330 scenarios are played in a fixed order, and scenario i is logged as hand_number i.
@@ -28,7 +31,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 # Let the script import the project packages when run from anywhere.
 sys.path.insert(0, str(REPO_ROOT))
 
-from agent.config import BASELINE  # noqa: E402
+from agent.config import CONFIG_NAMES, HarnessConfig, get_config  # noqa: E402
 from agent.llm_player import LLMPlayer  # noqa: E402
 from agent.ollama_client import (  # noqa: E402
     DEFAULT_KEEP_ALIVE,
@@ -56,10 +59,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model", default=DEFAULT_MODEL, help=f"Ollama model tag (default {DEFAULT_MODEL})")
     parser.add_argument("--out", type=Path, default=None, help="run directory (default runs/<run_id>)")
     parser.add_argument("--limit", type=int, default=None, help="play only the first N scenarios (smoke test)")
+    parser.add_argument("--config", choices=CONFIG_NAMES, default="baseline",
+                        help="harness config (default baseline; see docs/ablation-plan.md)")
     return parser.parse_args()
 
 
-def load_or_create_metadata(out_dir: Optional[Path], args: argparse.Namespace) -> tuple[Path, dict[str, Any]]:
+def load_or_create_metadata(
+    out_dir: Optional[Path], args: argparse.Namespace, config: HarnessConfig
+) -> tuple[Path, dict[str, Any]]:
     """Reuse metadata.json when resuming (and check it matches); otherwise start a new run."""
     if out_dir is not None and (out_dir / "metadata.json").exists():
         metadata = json.loads((out_dir / "metadata.json").read_text())
@@ -68,7 +75,7 @@ def load_or_create_metadata(out_dir: Optional[Path], args: argparse.Namespace) -
             "scenario_set_version": SCENARIO_SET_VERSION,
             "model": args.model,
             "run_seed": args.seed,
-            "harness_config": BASELINE.name,
+            "harness_config": config.name,
             "prompt_version": PROMPT_VERSION,
             "parser_version": PARSER_VERSION,
         }
@@ -79,15 +86,15 @@ def load_or_create_metadata(out_dir: Optional[Path], args: argparse.Namespace) -
         return out_dir, metadata
 
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    run_id = f"scenarios_{BASELINE.name}_{args.model.replace(':', '-')}_seed{args.seed}_{timestamp}"
+    run_id = f"scenarios_{config.name}_{args.model.replace(':', '-')}_seed{args.seed}_{timestamp}"
     out_dir = out_dir if out_dir is not None else REPO_ROOT / "runs" / run_id
     metadata = {
         "run_id": run_id,
         "run_type": RUN_TYPE,
         "scenario_set_version": SCENARIO_SET_VERSION,
         "model": args.model,
-        "harness_config": BASELINE.name,
-        "harness_flags": BASELINE.flags(),
+        "harness_config": config.name,
+        "harness_flags": config.flags(),
         "prompt_version": PROMPT_VERSION,
         "parser_version": PARSER_VERSION,
         "run_seed": args.seed,
@@ -102,7 +109,13 @@ def main() -> int:
     all_scenarios = build_scenarios()
     scenarios = all_scenarios[: args.limit] if args.limit is not None else all_scenarios
 
-    out_dir, metadata = load_or_create_metadata(args.out, args)
+    config = get_config(args.config)
+    try:  # before anything is written, so an unbuilt config leaves no run folder behind
+        player = LLMPlayer(OllamaClient(model=args.model), config, DEFAULT_RULES)
+    except NotImplementedError as error:
+        print(f"ERROR: harness config {config.name!r} can't run yet: {error}", file=sys.stderr)
+        return 2
+    out_dir, metadata = load_or_create_metadata(args.out, args, config)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     ollama_url = resolve_base_url()  # OLLAMA_HOST if set, else localhost:11434
@@ -148,7 +161,7 @@ def main() -> int:
         run_id=metadata["run_id"],
         model=args.model,
         model_digest=digest,
-        harness_config=BASELINE,
+        harness_config=config,
         run_seed=args.seed,
         ollama_seed=DEFAULT_OPTIONS.get("seed"),
         prompt_version=PROMPT_VERSION,
@@ -160,7 +173,6 @@ def main() -> int:
     print(f"Model {args.model} ({digest[:12]}), seed {args.seed}, scenarios 1..{len(scenarios)} "
           f"of {len(all_scenarios)}" + (f", resuming ({already} already done)" if already else ""), flush=True)
 
-    player = LLMPlayer(OllamaClient(model=args.model), BASELINE, DEFAULT_RULES)
     exit_code = 0
     try:
         run_scenarios(player, writer, info, scenarios, DEFAULT_RULES, on_hand=print_progress)

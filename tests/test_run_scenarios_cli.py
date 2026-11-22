@@ -7,7 +7,9 @@ from pathlib import Path
 
 import pytest
 
+from agent.config import get_config
 from agent.ollama_client import ChatReply
+from agent.prompt import ODDS_HEADER
 
 SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "run_scenarios.py"
 
@@ -127,3 +129,57 @@ def test_metadata_records_the_platform(tmp_path, monkeypatch):
 
     metadata = json.loads((out / "metadata.json").read_text())
     assert {k: metadata[k] for k in fake} == fake
+
+
+# --- --config ------------------------------------------------------------------------
+
+
+def test_default_config_is_baseline(tmp_path, monkeypatch):
+    module = load_script()
+    fake_ollama(module, monkeypatch)
+    out = tmp_path / "run"
+    assert run_main(module, monkeypatch, "--seed", "2026", "--out", str(out), "--limit", "1") == 0
+    metadata = json.loads((out / "metadata.json").read_text())
+    assert metadata["harness_config"] == "baseline"
+    assert metadata["harness_flags"] == get_config("baseline").flags()
+    assert metadata["run_id"].startswith("scenarios_baseline_")
+
+
+def test_prob_config_is_recorded_and_puts_odds_in_the_prompt(tmp_path, monkeypatch):
+    module = load_script()
+    fake_ollama(module, monkeypatch)
+    out = tmp_path / "run"
+    args = ("--seed", "2026", "--out", str(out), "--limit", "2", "--config", "prob")
+    assert run_main(module, monkeypatch, *args) == 0
+
+    metadata = json.loads((out / "metadata.json").read_text())
+    assert metadata["harness_config"] == "prob"
+    assert metadata["harness_flags"] == get_config("prob").flags()
+    assert metadata["run_id"].startswith("scenarios_prob_")
+    rows = read_jsonl(out / "decisions.jsonl")
+    assert all(r["harness_config"] == "prob" and ODDS_HEADER in r["prompt"]["user"] for r in rows)
+
+
+def test_resume_refuses_a_different_config(tmp_path, monkeypatch):
+    module = load_script()
+    fake_ollama(module, monkeypatch)
+    out = tmp_path / "run"
+    run_main(module, monkeypatch, "--seed", "2026", "--out", str(out), "--limit", "1")
+    with pytest.raises(SystemExit, match="harness_config"):
+        run_main(module, monkeypatch, "--seed", "2026", "--out", str(out), "--limit", "1", "--config", "prob")
+
+
+def test_unbuilt_config_fails_before_writing_anything(tmp_path, monkeypatch, capsys):
+    module = load_script()
+    fake_ollama(module, monkeypatch)
+    out = tmp_path / "run"
+    assert run_main(module, monkeypatch, "--seed", "2026", "--out", str(out), "--limit", "1", "--config", "strat") == 2
+    assert "not built yet" in capsys.readouterr().err
+    assert not out.exists()
+
+
+def test_unknown_config_is_rejected(tmp_path, monkeypatch):
+    module = load_script()
+    fake_ollama(module, monkeypatch)
+    with pytest.raises(SystemExit):
+        run_main(module, monkeypatch, "--seed", "2026", "--out", str(tmp_path / "run"), "--config", "memory")

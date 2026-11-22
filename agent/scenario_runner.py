@@ -18,7 +18,7 @@ from typing import Any, Callable, Optional, Sequence
 
 from agent.llm_player import LLMPlayer
 from agent.run_log import RunInfo, RunWriter, decision_rows, hand_row
-from agent.runner import Progress
+from agent.runner import Progress, check_player_config
 from agent.scenarios import Scenario, forced_shoe, scenario_shoe_seed
 from blackjack.engine import play_hand
 from blackjack.rules import DEFAULT_RULES, RuleSet
@@ -48,6 +48,7 @@ def run_scenarios(
     Errors from the player (e.g. Ollama unreachable) propagate: the interrupted
     hand is not written, so a later resume replays it.
     """
+    check_player_config(player, info)
     hand_numbers = range(1, len(scenarios) + 1)
     done = writer.completed_hands()
     previous = writer.previous_decision_rows()
