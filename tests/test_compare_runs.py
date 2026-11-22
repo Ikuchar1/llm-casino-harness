@@ -115,3 +115,14 @@ def test_main_exit_code(tmp_path, capsys):
     assert "Verdict: IDENTICAL" in capsys.readouterr().out
     b = write_run(tmp_path / "b", [dec(1, 0, "stand")], (1, -1))
     assert mod.main([str(a), str(b)]) == 1
+
+
+def test_header_prints_recorded_platform_fields(tmp_path):
+    mod = load_script()
+    meta = {**META, "hostname": "c1234", "platform": "Linux-x86_64", "gpus": ["NVIDIA L40S", "NVIDIA L40S"],
+            "slurm_job_id": "42"}
+    run = mod.load(write_run(tmp_path / "a", BASE, (1, -1), meta))
+    header = mod._header("A", run)
+    assert ("platform: platform=Linux-x86_64, hostname=c1234, gpus=NVIDIA L40S + NVIDIA L40S, "
+            "slurm_job_id=42") in header
+    assert "not recorded" not in header.split("platform:")[1]

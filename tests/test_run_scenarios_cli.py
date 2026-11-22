@@ -114,3 +114,16 @@ def test_metadata_records_the_ollama_host_url(tmp_path, monkeypatch):
     assert run_main(module, monkeypatch, "--seed", "2026", "--out", str(out), "--limit", "1") == 0
 
     assert json.loads((out / "metadata.json").read_text())["ollama_url"] == "http://127.0.0.1:20123"
+
+
+def test_metadata_records_the_platform(tmp_path, monkeypatch):
+    module = load_script()
+    fake_ollama(module, monkeypatch)
+    fake = {"hostname": "c1234", "platform": "Linux-x86_64", "gpus": None, "slurm_job_id": None}
+    monkeypatch.setattr(module, "platform_info", lambda: fake)
+    out = tmp_path / "run"
+
+    assert run_main(module, monkeypatch, "--seed", "2026", "--out", str(out), "--limit", "1") == 0
+
+    metadata = json.loads((out / "metadata.json").read_text())
+    assert {k: metadata[k] for k in fake} == fake

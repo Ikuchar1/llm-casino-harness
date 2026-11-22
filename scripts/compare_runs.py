@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 MAX_DIVERGENCE_LINES = 20
-PLATFORM_KEYS = ("platform", "hostname", "gpu")  # printed when the metadata records them
+PLATFORM_KEYS = ("platform", "hostname", "gpus", "slurm_job_id")  # printed when the metadata records them
 
 
 @dataclass
@@ -122,10 +122,14 @@ def _accuracy_and_payout(run: RunData) -> str:
     return f"accuracy {pct:.1f}% ({correct}/{total}), payout {payout:+g} over {len(run.hands)} hands"
 
 
+def _platform_value(value: Any) -> str:
+    return " + ".join(map(str, value)) if isinstance(value, list) else str(value)  # gpus is a list
+
+
 def _header(label: str, run: RunData) -> str:
     meta = run.metadata
     digest = (meta.get("model_digest") or "not recorded")[:12]
-    platform = ", ".join(f"{k}={meta[k]}" for k in PLATFORM_KEYS if meta.get(k)) or "not recorded"
+    platform = ", ".join(f"{k}={_platform_value(meta[k])}" for k in PLATFORM_KEYS if meta.get(k)) or "not recorded"
     return (
         f"{label}: {run.name}\n"
         f"  model {meta.get('model', '?')} digest {digest}, prompt {meta.get('prompt_version') or 'not logged'}, "

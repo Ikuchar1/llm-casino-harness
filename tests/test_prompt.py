@@ -67,7 +67,17 @@ def test_system_prompt_ends_with_the_format_instruction():
 def test_format_instruction_asks_for_reasoning_before_the_action():
     # v1's "Think briefly..." produced bare ACTION lines; v2 must ask for reasoning first.
     assert FORMAT_INSTRUCTION.startswith("First explain your reasoning in two or three sentences.")
-    assert PROMPT_VERSION == "baseline-v2"
+
+
+def test_prompt_version_is_v3():
+    # v3 adds the "Dealer checked for blackjack" state line for 10-value and ace upcards.
+    assert PROMPT_VERSION == "baseline-v3"
+
+
+def test_system_prompt_says_the_dealer_peeks():
+    text = build_system_prompt(DEFAULT_RULES)
+    assert ("When the dealer's upcard is an ace or a 10-value card, the dealer checks for blackjack "
+            "before you act; if the dealer has blackjack the hand ends immediately.") in text
 
 
 def test_system_prompt_for_h17_says_hits_soft_17():
@@ -110,6 +120,40 @@ def test_user_prompt_unsplittable_pair_is_still_called_a_pair():
     # After the one allowed split, 8,8 can't be split again, but the cards are still a pair.
     state = make_state(player_cards=("8", "8"), from_split=True, is_pair=False)
     assert "Pair: yes" in build_user_prompt(state)
+
+
+PEEK_LINE = "Dealer checked for blackjack: no blackjack."
+
+
+@pytest.mark.parametrize("upcard", ["10", "J", "Q", "K", "A"])
+def test_user_prompt_says_dealer_has_no_blackjack_under_ten_or_ace(upcard):
+    lines = build_user_prompt(make_state(dealer_upcard=upcard)).splitlines()
+    assert lines.count(PEEK_LINE) == 1
+    assert lines[lines.index(f"Dealer upcard: {upcard}") + 1] == PEEK_LINE
+
+
+@pytest.mark.parametrize("upcard", ["2", "3", "4", "5", "6", "7", "8", "9"])
+def test_user_prompt_has_no_peek_line_under_two_to_nine(upcard):
+    text = build_user_prompt(make_state(dealer_upcard=upcard))
+    assert "Dealer upcard: " + upcard in text
+    assert "checked" not in text.lower()
+
+
+def test_user_prompt_peek_line_on_a_split_hand():
+    state = make_state(player_cards=("8", "3"), total=11, from_split=True, hand_index=1, dealer_upcard="A")
+    lines = build_user_prompt(state).splitlines()
+    assert lines[-3:] == ["Dealer upcard: A", PEEK_LINE, "Legal actions: hit, stand, double"]
+
+
+def test_user_prompt_full_text_for_16_vs_k():
+    assert build_user_prompt(make_state(dealer_upcard="K")) == (
+        "Your cards: 10, 6\n"
+        "Your total: hard 16\n"
+        "Pair: no\n"
+        "Dealer upcard: K\n"
+        "Dealer checked for blackjack: no blackjack.\n"
+        "Legal actions: hit, stand, double"
+    )
 
 
 @pytest.mark.parametrize("word", ["basic strategy", "probability", "odds", "bust", "recommend", "should", "chart"])

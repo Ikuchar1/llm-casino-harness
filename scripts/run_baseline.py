@@ -38,6 +38,7 @@ from agent.ollama_client import (  # noqa: E402
     resolve_base_url,
 )
 from agent.parser import PARSER_VERSION  # noqa: E402
+from agent.platform_info import platform_info  # noqa: E402
 from agent.prompt import PROMPT_VERSION, build_system_prompt  # noqa: E402
 from agent.run_log import RunInfo, RunWriter, check_resume_compatible  # noqa: E402
 from agent.runner import Progress, run_hands  # noqa: E402
@@ -145,6 +146,7 @@ def main() -> int:
               file=sys.stderr)
         return 1
 
+    where = platform_info()  # also kept per session: a resumed job may land on another node
     metadata.update({
         "model_digest": digest,
         "ollama_version": ollama_version,
@@ -155,9 +157,10 @@ def main() -> int:
         "system_prompt": build_system_prompt(DEFAULT_RULES),
         "n_hands": args.hands,
         "python_version": platform.python_version(),
+        **where,  # hostname, platform, gpus, slurm_job_id of the latest session
         "git_commit": git_commit(),
     })
-    session = {"started_at": now_iso(), "ended_at": None, "status": "running"}
+    session = {"started_at": now_iso(), "ended_at": None, "status": "running", **where}
     metadata["sessions"].append(session)
 
     def save_metadata() -> None:

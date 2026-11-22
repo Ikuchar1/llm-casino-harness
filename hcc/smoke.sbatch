@@ -5,8 +5,10 @@
 #SBATCH --mem=16G
 #SBATCH --time=01:00:00
 #SBATCH --output=bj_smoke.%j.out
-# To pin a GPU type, add a line like this (see `sinfo -p gpu -o "%N %f"` for features):
-##SBATCH --constraint=gpu_l40s
+# Same pinned GPU type as hcc/full_run.sbatch, so smoke tests match the final runs
+# (all final runs must use the same GPU type). Verify the feature name on Swan with
+#   sinfo -p gpu -o "%f" | tr ',' '\n' | sort -u
+#SBATCH --constraint=gpu_p100
 
 # 20-hand smoke test of the blackjack baseline on HCC Swan.
 # Submit from the repo root:  sbatch hcc/smoke.sbatch

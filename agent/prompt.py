@@ -12,7 +12,11 @@ from blackjack.rules import RuleSet
 # are never mixed (it is logged on every decision and checked on resume).
 # v1 ("Think briefly about the best play, then end your reply with ...") made
 # qwen2.5:7b answer with a bare ACTION line and no reasoning; v2 asks for reasoning first.
-PROMPT_VERSION = "baseline-v2"
+# v3 adds a "Dealer checked for blackjack" state line under 10-value and ace upcards,
+# because the dealer peeks: at any player decision the dealer is known not to have blackjack.
+PROMPT_VERSION = "baseline-v3"
+
+PEEK_LINE = "Dealer checked for blackjack: no blackjack."
 
 FORMAT_INSTRUCTION = (
     "First explain your reasoning in two or three sentences. Then end your reply with a "
@@ -69,7 +73,7 @@ def build_system_prompt(rules: RuleSet) -> str:
 
 
 def build_user_prompt(state: DecisionState) -> str:
-    """The current decision state only: cards, total, pair, split, upcard, legal actions.
+    """The current decision state only: cards, total, pair, split, upcard, peek result, legal actions.
 
     "Pair" means the two cards have equal value, even when splitting is no longer
     legal (after the one allowed split); the legal actions show whether split is offered.
@@ -82,10 +86,11 @@ def build_user_prompt(state: DecisionState) -> str:
     ]
     if state.from_split:
         lines.append(f"This hand came from a split (hand {state.hand_index + 1} of 2).")
-    lines += [
-        f"Dealer upcard: {state.dealer_upcard}",
-        f"Legal actions: {', '.join(state.legal_actions)}",
-    ]
+    lines.append(f"Dealer upcard: {state.dealer_upcard}")
+    if card_value(state.dealer_upcard) in (10, 11):
+        # The dealer peeks under a 10 or an ace, so reaching a decision means no blackjack.
+        lines.append(PEEK_LINE)
+    lines.append(f"Legal actions: {', '.join(state.legal_actions)}")
     return "\n".join(lines)
 
 

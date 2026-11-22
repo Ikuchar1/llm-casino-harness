@@ -50,3 +50,33 @@ less ollama_serve.<jobid>.log    # the Ollama server's own log, if something wen
 
 Rerunning with the same `--out` resumes instead of starting over, so delete
 `runs/hcc_smoke_seed2026` before a fresh smoke test.
+
+## GPU type
+
+Both `smoke.sbatch` and `full_run.sbatch` pin `#SBATCH --constraint=gpu_p100` (Tesla P100; the
+bit-identical smoke pair ran on one). All final runs must use the same GPU type. Check the feature
+names Swan offers with:
+
+```bash
+sinfo -p gpu -o "%f" | tr ',' '\n' | sort -u
+```
+
+## Full run
+
+From the repo root:
+
+```bash
+sbatch hcc/full_run.sbatch            # label v3, model qwen2.5:7b
+sbatch hcc/full_run.sbatch v3b        # another label (e.g. a rerun), same model
+```
+
+The job runs the 1000-hand baseline, then the 330-cell scenario set, both with seed 2026. Outputs:
+
+- `runs/hcc_baseline_<label>_seed2026/` and `runs/hcc_scenarios_<label>_seed2026/`
+  (`_<model>` is appended, with `:` replaced by `-`, if you pass a non-default model as `$2`)
+- `bj_full.<jobid>.out` (progress lines) and `ollama_serve.<jobid>.log` in the repo root
+
+**After a timeout** (8 hour limit), resubmit the exact same command. Both scripts resume from the
+existing `--out` folder: finished hands are skipped and new ones appended, so a finished baseline
+plays 0 hands and the job moves on to the scenarios. Check the last session's `status` in each
+`metadata.json` (`completed` when done). Use a new label to start from scratch instead.

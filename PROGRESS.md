@@ -2,6 +2,7 @@
 
 Running log of important events and completed work. Newest entries at the bottom of each day.
 For *what the paper should say*, see `NOTES_FOR_PAPER.md`. For term definitions, see `CONTEXT.md`.
+Milestone 3 findings for the paper (HCC, reproducibility, v3 prompt): see `MILESTONE3_NOTES.md`.
 
 ## 2026-11-22 (Milestone 2 due 11:59pm)
 
@@ -120,3 +121,10 @@ Ideas parked for later: card counting as Future Work (needs a count-adjusted gra
 - Outputs: `results/baseline_seed2026/`, `results/scenarios_seed2026/`, `results/comparison_baseline_seed2026__scenarios_seed2026/`.
 - Cosmetic: the scenario EV heatmap footer says "Grey: no decisions" although it has no grey cells.
 - **Open for Ian:** commit? gitignore `results/`? "Dealer checked" prompt line (future version)?
+
+### HCC + prompt v3 (Milestone 3 prep) — 2026-11-22
+- HCC Swan works (ollama-gpu/0.15, Tesla P100). Mac vs HCC diverge on the same 20 hands; HCC vs HCC rerun identical. All final runs go on HCC with one pinned GPU type (`gpu_p100`). Details in `MILESTONE3_NOTES.md`.
+- Prompt **baseline-v3**: "Dealer checked for blackjack: no blackjack." under 10/A upcards.
+- Run metadata now records `hostname`, `platform`, `gpus`, `slurm_job_id` (also per session); `compare_runs.py` prints them.
+- `hcc/full_run.sbatch`: 1000-hand baseline + 330 scenarios, seed 2026, resubmit to resume after a timeout.
+- Mac v3 20-hand smoke (`runs/smoke_v3_seed2026`): 54.5% (12/22), 0 invalid, payout +0. **438 tests pass.**
