@@ -1,0 +1,3 @@
+run_dir,run_id,prompt_version,harness_config,model,hands,decisions,accuracy,accuracy_ci_low,accuracy_ci_high,invalid_rate,invalid_count,mean_return_per_hand,return_ci_low,return_ci_high
+smoke_seed2026,baseline_qwen2.5-7b_seed2026_20261122-093657,not logged,baseline,qwen2.5:7b,20,28,0.6428571428571429,0.4582997758222723,0.7929438802754113,0.0,0,-0.2,-0.8871043742057181,0.4871043742057181
+smoke_seed2026_v2,baseline_qwen2.5-7b_seed2026_20261122-093942,baseline-v2,baseline,qwen2.5:7b,20,22,0.5,0.3072180469247956,0.6927819530752044,0.0,0,0.0,-0.7354296989551503,0.7354296989551503

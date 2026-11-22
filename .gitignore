@@ -221,3 +221,6 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Run outputs (logs, charts) from experiment runs
+runs/

@@ -1,0 +1,118 @@
+"""Tests for the baseline prompt builder (agent/prompt.py) and HarnessConfig."""
+
+import dataclasses
+
+import pytest
+
+from agent.config import BASELINE, HarnessConfig
+from agent.prompt import FORMAT_INSTRUCTION, PROMPT_VERSION, build_system_prompt, build_user_prompt
+from blackjack.engine import DecisionState
+from blackjack.rules import DEFAULT_RULES
+
+
+def make_state(**overrides) -> DecisionState:
+    values = dict(
+        player_cards=("10", "6"),
+        total=16,
+        is_soft=False,
+        is_pair=False,
+        dealer_upcard="10",
+        legal_actions=("hit", "stand", "double"),
+        hand_index=0,
+        num_cards=2,
+        from_split=False,
+    )
+    values.update(overrides)
+    return DecisionState(**values)
+
+
+# --- HarnessConfig ---------------------------------------------------------------------
+
+
+def test_baseline_has_every_component_off():
+    assert BASELINE.name == "baseline"
+    assert not any([BASELINE.probability_tool, BASELINE.strategy_info, BASELINE.memory, BASELINE.self_evaluation])
+
+
+def test_config_is_frozen():
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        BASELINE.memory = True  # type: ignore[misc]
+
+
+def test_config_flags_lists_every_component():
+    assert HarnessConfig("x", memory=True).flags() == {
+        "probability_tool": False,
+        "strategy_info": False,
+        "memory": True,
+        "self_evaluation": False,
+    }
+
+
+# --- System prompt ---------------------------------------------------------------------
+
+
+def test_system_prompt_states_the_rule_set():
+    text = build_system_prompt(DEFAULT_RULES)
+    for phrase in ["6 decks", "stands on soft 17", "after a split", "once", "one card", "surrender",
+                   "insurance", "3 to 2", "1 unit"]:
+        assert phrase in text, phrase
+
+
+def test_system_prompt_ends_with_the_format_instruction():
+    text = build_system_prompt(DEFAULT_RULES)
+    assert text.rstrip().endswith(FORMAT_INSTRUCTION)
+    assert "ACTION: <one of the legal actions>" in FORMAT_INSTRUCTION
+
+
+def test_format_instruction_asks_for_reasoning_before_the_action():
+    # v1's "Think briefly..." produced bare ACTION lines; v2 must ask for reasoning first.
+    assert FORMAT_INSTRUCTION.startswith("First explain your reasoning in two or three sentences.")
+    assert PROMPT_VERSION == "baseline-v2"
+
+
+def test_system_prompt_for_h17_says_hits_soft_17():
+    rules = dataclasses.replace(DEFAULT_RULES, dealer_hits_soft_17=True)
+    assert "hits soft 17" in build_system_prompt(rules)
+
+
+# --- User prompt -----------------------------------------------------------------------
+
+
+def test_user_prompt_contains_the_state():
+    text = build_user_prompt(make_state())
+    assert "Your cards: 10, 6" in text
+    assert "Your total: hard 16" in text
+    assert "Pair: no" in text
+    assert "Dealer upcard: 10" in text
+    assert "Legal actions: hit, stand, double" in text
+    assert "from a split" not in text.lower()
+
+
+def test_user_prompt_soft_total():
+    text = build_user_prompt(make_state(player_cards=("A", "6"), total=17, is_soft=True))
+    assert "Your total: soft 17" in text
+
+
+def test_user_prompt_pair():
+    state = make_state(player_cards=("8", "8"), is_pair=True, legal_actions=("hit", "stand", "double", "split"))
+    text = build_user_prompt(state)
+    assert "Pair: yes" in text
+    assert "Legal actions: hit, stand, double, split" in text
+
+
+def test_user_prompt_split_hand_mentions_the_split():
+    state = make_state(player_cards=("8", "3"), total=11, from_split=True, hand_index=1)
+    text = build_user_prompt(state)
+    assert "This hand came from a split (hand 2 of 2)." in text
+
+
+def test_user_prompt_unsplittable_pair_is_still_called_a_pair():
+    # After the one allowed split, 8,8 can't be split again, but the cards are still a pair.
+    state = make_state(player_cards=("8", "8"), from_split=True, is_pair=False)
+    assert "Pair: yes" in build_user_prompt(state)
+
+
+@pytest.mark.parametrize("word", ["basic strategy", "probability", "odds", "bust", "recommend", "should", "chart"])
+def test_prompts_contain_no_strategy_hints(word):
+    text = (build_system_prompt(DEFAULT_RULES) + build_user_prompt(make_state())).lower()
+    assert word not in text
