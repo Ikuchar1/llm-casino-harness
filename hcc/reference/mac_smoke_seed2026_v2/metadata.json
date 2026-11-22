@@ -1,0 +1,47 @@
+{
+  "run_id": "baseline_qwen2.5-7b_seed2026_20261122-093942",
+  "model": "qwen2.5:7b",
+  "harness_config": "baseline",
+  "harness_flags": {
+    "probability_tool": false,
+    "strategy_info": false,
+    "memory": false,
+    "self_evaluation": false
+  },
+  "prompt_version": "baseline-v2",
+  "run_seed": 2026,
+  "started_at": "2026-11-22T09:39:42-06:00",
+  "sessions": [
+    {
+      "started_at": "2026-11-22T09:39:42-06:00",
+      "ended_at": "2026-11-22T09:40:55-06:00",
+      "status": "completed"
+    }
+  ],
+  "model_digest": "845dbda0ea48ed749caafd9e6037047aa19acfcfd82e704d7ca97d631a0b697e",
+  "ollama_version": "0.35.0",
+  "ollama_url": "http://localhost:11434",
+  "ollama_options": {
+    "temperature": 0,
+    "seed": 42,
+    "num_predict": 400
+  },
+  "keep_alive": "30m",
+  "rule_set": {
+    "num_decks": 6,
+    "dealer_hits_soft_17": false,
+    "double_after_split": true,
+    "max_splits": 1,
+    "split_aces_one_card": true,
+    "surrender_allowed": false,
+    "insurance_offered": false,
+    "dealer_peeks": true,
+    "blackjack_payout": 1.5,
+    "bet": 1
+  },
+  "system_prompt": "You are playing blackjack against a dealer. The goal is to finish closer to 21 than the dealer without going over 21.\n\nRules:\n- The game uses 6 decks shuffled together.\n- Number cards count their value, J, Q and K count 10, and an ace counts 1 or 11.\n- The dealer must draw to 17 and stands on soft 17.\n- You may double on any first two cards, including after a split.\n- You may split any two cards of equal value (for example 8 and 8, or K and Q) once; there is no resplitting.\n- Split aces receive exactly one card each.\n- There is no surrender and no insurance.\n- When the dealer's upcard is an ace or a 10-value card, the dealer checks for blackjack before you act; if the dealer has blackjack the hand ends immediately.\n- Blackjack (an ace and a 10-value card as your first two cards) pays 3 to 2. A two-card 21 after a split counts as 21, not blackjack.\n- Your bet is 1 unit per hand.\n\nActions:\n- hit: take another card.\n- stand: take no more cards.\n- double: double your bet, take exactly one more card, then stand.\n- split: split a pair into two separate hands, each with its own bet.\n\nFirst explain your reasoning in two or three sentences. Then end your reply with a final line of exactly the form `ACTION: <one of the legal actions>`.",
+  "n_hands": 20,
+  "python_version": "3.14.3",
+  "git_commit": "d5d93235bf826dae2c447dfe221cd6f0bcb87fc3-dirty",
+  "ended_at": "2026-11-22T09:40:55-06:00"
+}
