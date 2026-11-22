@@ -29,7 +29,7 @@ lists your queued and running jobs. `$NRDSTOR` is your large work storage (use i
 From the repo root (`cd $NRDSTOR/llm-casino-harness`):
 
 ```bash
-sbatch hcc/smoke.sbatch      # prints "Submitted batch job <jobid>"
+sbatch hcc/smoke.sbatch      # prints "Submitted batch job <jobid>"; works with or without the env active
 squeue -u $USER              # ST column: PD = waiting for a GPU, R = running; gone = finished
 ```
 

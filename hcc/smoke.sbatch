@@ -10,7 +10,7 @@
 
 # 20-hand smoke test of the blackjack baseline on HCC Swan.
 # Submit from the repo root:  sbatch hcc/smoke.sbatch
-# (no `set -u`: the conda activate scripts reference unset variables)
+# (no `set -u`: module scripts may reference unset variables)
 set -eo pipefail
 
 cd "$SLURM_SUBMIT_DIR"
@@ -61,14 +61,20 @@ echo "ollama serve is up"
 
 ollama pull qwen2.5:7b
 
-module load anaconda
-eval "$(conda shell.bash hook)"
-conda activate "$NRDSTOR/envs/bj"
-python --version
+# Call the env's python by absolute path instead of `conda activate`. sbatch copies
+# the submitting shell's environment, so if bj was active at submit time conda sees
+# CONDA_PREFIX already set and skips fixing PATH after `module purge`; bare `python`
+# then resolves to anaconda base (wrong version, no `requests`).
+PY="$NRDSTOR/envs/bj/bin/python"
+if [ ! -x "$PY" ]; then
+    echo "ERROR: $PY not found or not executable. Create the env first (see hcc/setup.md)." >&2
+    exit 1
+fi
+"$PY" --version
 
 # Note: re-using --out resumes the run, so a second smoke job with this same
 # directory plays 0 new hands. Delete runs/hcc_smoke_seed2026 to start fresh.
-python scripts/run_baseline.py --hands 20 --seed 2026 --model qwen2.5:7b --out runs/hcc_smoke_seed2026
+"$PY" scripts/run_baseline.py --hands 20 --seed 2026 --model qwen2.5:7b --out runs/hcc_smoke_seed2026
 
 # Shows whether the model ran on the GPU ("100% GPU") or fell back to CPU.
 ollama ps
