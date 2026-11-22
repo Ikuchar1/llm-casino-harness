@@ -74,7 +74,7 @@ fi
 
 # Note: re-using --out resumes the run, so a second smoke job with this same
 # directory plays 0 new hands. Delete runs/hcc_smoke_seed2026 to start fresh.
-"$PY" scripts/run_baseline.py --hands 20 --seed 2026 --model qwen2.5:7b --out runs/hcc_smoke_seed2026
+"$PY" scripts/run_baseline.py --hands 20 --seed 2026 --model qwen2.5:7b --out "${1:-runs/hcc_smoke_seed2026}"
 
 # Shows whether the model ran on the GPU ("100% GPU") or fell back to CPU.
 ollama ps
