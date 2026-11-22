@@ -66,6 +66,8 @@ class ChatClient(Protocol):
 
     def chat(self, system: str, user: str) -> ChatReply: ...
 
+    def chat_messages(self, messages: list[dict[str, str]]) -> ChatReply: ...
+
 
 class OllamaClient:
     """Sends chat requests to Ollama with the locked options."""
@@ -89,9 +91,17 @@ class OllamaClient:
 
     def chat(self, system: str, user: str) -> ChatReply:
         """Send one system + user message pair and return the model's reply."""
+        return self.chat_messages([{"role": "system", "content": system}, {"role": "user", "content": user}])
+
+    def chat_messages(self, messages: list[dict[str, str]]) -> ChatReply:
+        """Send a whole conversation (role/content dicts, oldest first) and return the next reply.
+
+        Same model, locked options and keep_alive as chat(); self-evaluation uses it to
+        continue a decision's conversation (system, user, assistant, user).
+        """
         payload = {
             "model": self.model,
-            "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
+            "messages": [dict(message) for message in messages],
             "stream": False,
             "options": self.options,
             "keep_alive": self.keep_alive,

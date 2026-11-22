@@ -101,7 +101,12 @@ if [ -z "${READY:-}" ]; then
 fi
 echo "ollama serve is up"
 
-ollama pull "$MODEL"
+# Pull only if missing: an unconditional pull can fetch a newer build of the same tag and
+# change the weights between runs (run_baseline.py refuses to resume on a digest change).
+# hcc/submit_all.sh runs hcc/pull_model.sbatch first so the jobs never pull at the same time.
+if ! ollama show "$MODEL" > /dev/null 2>&1; then
+    ollama pull "$MODEL"
+fi
 
 # Call the env's python by absolute path instead of `conda activate` (see hcc/smoke.sbatch:
 # a conda env active at submit time leaves bare `python` pointing at anaconda base).

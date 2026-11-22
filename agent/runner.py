@@ -78,7 +78,8 @@ def run_hands(
         session_hands += 1
         decisions += len(rows)
         session_decisions += len(rows)
-        session_latency += sum(row["latency_s"] for row in rows)
+        # Model time per decision, including the self-evaluation second call.
+        session_latency += sum(row["latency_s"] + (row.get("self_eval") or {}).get("latency_s", 0) for row in rows)
         correct += hand["num_correct"]
         invalid += hand["num_invalid"]
         payout += hand["payout"]

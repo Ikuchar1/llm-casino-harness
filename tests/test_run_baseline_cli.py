@@ -7,9 +7,11 @@ from pathlib import Path
 
 import pytest
 
-from agent.config import get_config
+from agent.config import HarnessConfig, get_config
 from agent.ollama_client import ChatReply
-from agent.prompt import ODDS_HEADER
+from agent.prompt import ODDS_HEADER, SELF_EVAL_VERSION, build_system_prompt
+from agent.strategy_info import STRATEGY_INFO_VERSION, principles_block
+from blackjack.rules import DEFAULT_RULES
 
 SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "run_baseline.py"
 
@@ -29,6 +31,9 @@ class FakeClient:
 
     def chat(self, system, user):
         return ChatReply(content="Standing.\nACTION: stand", done_reason="stop", eval_count=5, latency_s=0.1)
+
+    def chat_messages(self, messages):
+        return ChatReply(content="Still standing.\nACTION: stand", done_reason="stop", eval_count=6, latency_s=0.2)
 
 
 def test_metadata_records_the_ollama_host_url(tmp_path, monkeypatch):
@@ -102,13 +107,36 @@ def test_resume_refuses_a_different_config(tmp_path, monkeypatch):
         run_with(module, monkeypatch, tmp_path, "--config", "prob")
 
 
-@pytest.mark.parametrize("name", ["strat", "self", "prob_strat", "prob_strat_self"])
-def test_unbuilt_config_fails_before_writing_anything(tmp_path, monkeypatch, capsys, name):
+def test_unbuilt_config_fails_before_writing_anything(tmp_path, monkeypatch, capsys):
     module = load_script()
-    code, out = run_with(module, monkeypatch, tmp_path, "--config", name)
+    monkeypatch.setattr(module, "get_config", lambda name: HarnessConfig("baseline", memory=True))
+    code, out = run_with(module, monkeypatch, tmp_path)
     assert code == 2
     assert "not built yet" in capsys.readouterr().err
     assert not out.exists()
+
+
+def test_baseline_metadata_keeps_the_baseline_system_prompt_and_no_component_versions(tmp_path, monkeypatch):
+    module = load_script()
+    code, out = run_with(module, monkeypatch, tmp_path)
+    metadata = json.loads((out / "metadata.json").read_text())
+    assert metadata["system_prompt"] == build_system_prompt(DEFAULT_RULES)
+    assert "strategy_info_version" not in metadata and "self_eval_version" not in metadata
+    rows = [json.loads(line) for line in (out / "decisions.jsonl").read_text().splitlines()]
+    assert all("self_eval" not in r for r in rows)
+
+
+def test_prob_strat_self_records_versions_principles_and_self_eval_rows(tmp_path, monkeypatch):
+    module = load_script()
+    code, out = run_with(module, monkeypatch, tmp_path, "--config", "prob_strat_self")
+    assert code == 0
+    metadata = json.loads((out / "metadata.json").read_text())
+    assert metadata["strategy_info_version"] == STRATEGY_INFO_VERSION
+    assert metadata["self_eval_version"] == SELF_EVAL_VERSION
+    assert metadata["system_prompt"] == build_system_prompt(DEFAULT_RULES) + "\n\n" + principles_block()
+    rows = [json.loads(line) for line in (out / "decisions.jsonl").read_text().splitlines()]
+    assert rows and all(r["self_eval"]["second_raw"] == "Still standing.\nACTION: stand" for r in rows)
+    assert all(r["prompt"]["system"] == metadata["system_prompt"] for r in rows)
 
 
 def test_unknown_config_is_rejected(tmp_path, monkeypatch):

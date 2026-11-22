@@ -43,7 +43,7 @@ from agent.ollama_client import (  # noqa: E402
 )
 from agent.parser import PARSER_VERSION  # noqa: E402
 from agent.platform_info import platform_info  # noqa: E402
-from agent.prompt import PROMPT_VERSION, build_system_prompt  # noqa: E402
+from agent.prompt import PROMPT_VERSION  # noqa: E402
 from agent.run_log import RunInfo, RunWriter, check_resume_compatible  # noqa: E402
 from agent.runner import Progress, run_hands  # noqa: E402
 from blackjack.rules import DEFAULT_RULES  # noqa: E402
@@ -168,7 +168,7 @@ def main() -> int:
         "ollama_options": DEFAULT_OPTIONS,
         "keep_alive": DEFAULT_KEEP_ALIVE,
         "rule_set": dataclasses.asdict(DEFAULT_RULES),
-        "system_prompt": build_system_prompt(DEFAULT_RULES),
+        **player.run_metadata(),  # system_prompt, plus strategy-info / self-eval versions when on
         "n_hands": args.hands,
         "python_version": platform.python_version(),
         **where,  # hostname, platform, gpus, slurm_job_id of the latest session

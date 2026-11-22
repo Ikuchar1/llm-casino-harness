@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from agent.config import get_config
+from agent.config import HarnessConfig, get_config
 from agent.ollama_client import ChatReply
 from agent.prompt import ODDS_HEADER
 
@@ -29,6 +29,9 @@ class FakeClient:
 
     def chat(self, system, user):
         return ChatReply(content="Standing.\nACTION: stand", done_reason="stop", eval_count=5, latency_s=0.1)
+
+    def chat_messages(self, messages):
+        return ChatReply(content="Still standing.\nACTION: stand", done_reason="stop", eval_count=6, latency_s=0.2)
 
 
 def fake_ollama(module, monkeypatch, digest="sha256:fake"):
@@ -172,8 +175,9 @@ def test_resume_refuses_a_different_config(tmp_path, monkeypatch):
 def test_unbuilt_config_fails_before_writing_anything(tmp_path, monkeypatch, capsys):
     module = load_script()
     fake_ollama(module, monkeypatch)
+    monkeypatch.setattr(module, "get_config", lambda name: HarnessConfig("baseline", memory=True))
     out = tmp_path / "run"
-    assert run_main(module, monkeypatch, "--seed", "2026", "--out", str(out), "--limit", "1", "--config", "strat") == 2
+    assert run_main(module, monkeypatch, "--seed", "2026", "--out", str(out), "--limit", "1") == 2
     assert "not built yet" in capsys.readouterr().err
     assert not out.exists()
 
@@ -183,3 +187,15 @@ def test_unknown_config_is_rejected(tmp_path, monkeypatch):
     fake_ollama(module, monkeypatch)
     with pytest.raises(SystemExit):
         run_main(module, monkeypatch, "--seed", "2026", "--out", str(tmp_path / "run"), "--config", "memory")
+
+
+def test_self_config_scenarios_log_self_eval_and_its_version(tmp_path, monkeypatch):
+    module = load_script()
+    fake_ollama(module, monkeypatch)
+    out = tmp_path / "run"
+    assert run_main(module, monkeypatch, "--seed", "2026", "--out", str(out), "--limit", "3", "--config", "self") == 0
+    metadata = json.loads((out / "metadata.json").read_text())
+    assert metadata["self_eval_version"] == "self-eval-v1"
+    assert "strategy_info_version" not in metadata
+    rows = read_jsonl(out / "decisions.jsonl")
+    assert rows and all("self_eval" in r and r["scenario_id"] for r in rows)

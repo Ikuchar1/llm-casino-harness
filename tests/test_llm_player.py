@@ -7,8 +7,10 @@ import requests
 from agent.config import BASELINE, HarnessConfig, get_config
 from agent.llm_player import LLMPlayer
 from agent.ollama_client import ChatReply, OllamaClient, OllamaUnavailableError
-from agent.prompt import ODDS_HEADER, build_user_prompt
+from agent.prompt import ODDS_HEADER, SELF_EVAL_VERSION, build_system_prompt, build_user_prompt
+from agent.strategy_info import STRATEGY_INFO_VERSION, principles_block
 from blackjack.engine import DecisionState, play_hand
+from blackjack.rules import DEFAULT_RULES
 
 
 def stacked(player_cards, dealer_cards, draws=()):
@@ -41,10 +43,41 @@ def test_enabling_any_component_is_not_implemented_yet():
         LLMPlayer(FakeChatClient([]), HarnessConfig("x", memory=True))
 
 
-@pytest.mark.parametrize("name", ["prob_strat", "prob_strat_self", "strat", "self"])
-def test_strategy_info_and_self_evaluation_configs_are_not_implemented_yet(name):
-    with pytest.raises(NotImplementedError):
-        LLMPlayer(FakeChatClient([]), get_config(name))
+@pytest.mark.parametrize("name", ["baseline", "prob", "prob_strat", "prob_strat_self", "strat", "self"])
+def test_every_blackjack_config_is_built(name):
+    LLMPlayer(FakeChatClient([]), get_config(name))
+
+
+@pytest.mark.parametrize("name", ["baseline", "prob", "self"])
+def test_configs_without_strategy_info_keep_the_exact_baseline_system_prompt(name):
+    assert LLMPlayer(FakeChatClient([]), get_config(name)).system_prompt == build_system_prompt(DEFAULT_RULES)
+
+
+@pytest.mark.parametrize("name", ["strat", "prob_strat", "prob_strat_self"])
+def test_strategy_info_appends_the_principles_after_one_blank_line(name):
+    player = LLMPlayer(FakeChatClient([]), get_config(name))
+    assert player.system_prompt == build_system_prompt(DEFAULT_RULES) + "\n\n" + principles_block()
+
+
+def test_strat_config_sends_the_principles_in_the_system_message():
+    client = FakeChatClient(["ACTION: stand"])
+    play_hand(LLMPlayer(client, get_config("strat")), 1, 1, shoe=stacked(("10", "6"), ("6", "7")))
+    system, user = client.calls[0]
+    assert system.endswith(principles_block())
+    assert ODDS_HEADER not in user
+
+
+@pytest.mark.parametrize("name,expected", [
+    ("baseline", {}),
+    ("prob", {}),
+    ("strat", {"strategy_info_version": STRATEGY_INFO_VERSION}),
+    ("self", {"self_eval_version": SELF_EVAL_VERSION}),
+    ("prob_strat_self", {"strategy_info_version": STRATEGY_INFO_VERSION, "self_eval_version": SELF_EVAL_VERSION}),
+])
+def test_run_metadata_records_component_versions_only_when_on(name, expected):
+    metadata = LLMPlayer(FakeChatClient([]), get_config(name)).run_metadata()
+    assert {k: v for k, v in metadata.items() if k.endswith("_version")} == expected
+    assert metadata["system_prompt"] == LLMPlayer(FakeChatClient([]), get_config(name)).system_prompt
 
 
 def test_prob_config_sends_the_odds_block_and_logs_it():
@@ -171,6 +204,32 @@ def test_client_sends_the_locked_request():
     assert reply.done_reason == "stop"
     assert reply.eval_count == 7
     assert reply.latency_s >= 0
+
+
+def test_chat_messages_sends_the_whole_conversation_with_the_same_locked_options():
+    session = FakeSession([FakeResponse(200, OK_BODY), FakeResponse(200, OK_BODY)])
+    client = make_client(session)
+    messages = [
+        {"role": "system", "content": "SYS"},
+        {"role": "user", "content": "USER"},
+        {"role": "assistant", "content": "ACTION: stand"},
+        {"role": "user", "content": "RECHECK"},
+    ]
+    reply = client.chat_messages(messages)
+    client.chat("SYS", "USER")
+
+    multi, single = session.posts[0]["json"], session.posts[1]["json"]
+    assert multi["messages"] == messages
+    assert {k: v for k, v in multi.items() if k != "messages"} == {k: v for k, v in single.items() if k != "messages"}
+    assert multi["options"] == {"temperature": 0, "seed": 42, "num_predict": 400}
+    assert reply.content == "ACTION: hit"
+    assert reply.eval_count == 7
+
+
+def test_chat_messages_retries_like_chat():
+    session = FakeSession([requests.ConnectionError("down"), FakeResponse(200, OK_BODY)])
+    assert make_client(session).chat_messages([{"role": "user", "content": "U"}]).content == "ACTION: hit"
+    assert len(session.posts) == 2
 
 
 def test_client_retries_connection_and_http_errors_then_succeeds():

@@ -6,7 +6,9 @@ Three things, computed exactly with the same shoe and dealer model as blackjack/
 - the dealer's final-total distribution (17-21 or bust), given no dealer blackjack;
 - if the player stands now, the chance to win, push and lose.
 
-The visible cards are the player's current cards and the dealer upcard. No per-action
+The visible cards are the player's current cards and the dealer upcard; on a split hand
+the other split card is known too and is passed as extra_removed (the same card
+analysis/ev_loss.py removes when grading with ev.action_evs). No per-action
 EV is computed here on purpose: the largest EV is basically the answer.
 """
 
@@ -27,10 +29,18 @@ class Odds:
     stand_lose: float
 
 
-def compute_odds(player_cards: list[str] | tuple[str, ...], upcard: str, rules: RuleSet = DEFAULT_RULES) -> Odds:
-    """The probability tool's odds for these player cards against this dealer upcard."""
+def compute_odds(
+    player_cards: list[str] | tuple[str, ...],
+    upcard: str,
+    rules: RuleSet = DEFAULT_RULES,
+    extra_removed: tuple[str, ...] = (),
+) -> Odds:
+    """The probability tool's odds for these player cards against this dealer upcard.
+
+    extra_removed: other known cards to take out of the shoe (the other split card).
+    """
     cards = list(player_cards)
-    probs = shoe_probabilities(cards + [upcard], rules.num_decks)
+    probs = shoe_probabilities(cards + [upcard] + list(extra_removed), rules.num_decks)
     total, is_soft = hand_value(cards)
     dealer = dealer_distribution(upcard, probs, rules)
 

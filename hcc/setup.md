@@ -92,3 +92,59 @@ chosen config. Outputs:
 existing `--out` folder: finished hands are skipped and new ones appended, so a finished baseline
 plays 0 hands and the job moves on to the scenarios. Check the last session's `status` in each
 `metadata.json` (`completed` when done). Use a new label to start from scratch instead.
+
+## All ablation runs at once (`hcc/submit_all.sh`)
+
+`hcc/submit_all.sh` submits every remaining final run: the 7b baseline already exists, so that is
+5 configs on `qwen2.5:7b` (`prob`, `prob_strat`, `prob_strat_self`, `strat`, `self`) and all 6 on
+`qwen2.5:14b`, 11 jobs. Run it on the login node from the repo root, after `git pull`:
+
+```bash
+cd $NRDSTOR/llm-casino-harness
+git pull
+hcc/submit_all.sh --smoke --dry-run   # print the sbatch commands only
+hcc/submit_all.sh --smoke             # smoke first: every config on both models
+squeue -u $USER
+```
+
+It first submits one `hcc/pull_model.sbatch` job per model. That job pulls the model into
+`$NRDSTOR/OLLAMA_MODELS` only if `ollama show <model>` doesn't find it (`qwen2.5:14b` is ~9 GB at
+q4 and fits a P100's 16 GB), so six jobs never download it at the same time. Every other job waits
+for its model's pull job (`--dependency=afterok`). The run jobs also pull only if missing now,
+because an unconditional pull can fetch new weights behind the same tag (a changed digest stops
+a resume). If a pull job fails, the jobs waiting on it stay pending with `DependencyNeverSatisfied`:
+`scancel` them, fix the pull, and submit again.
+
+**Smoke** (`--smoke`): one `hcc/smoke_configs.sbatch` job per model (1.5 h limit) that runs every
+config for 20 natural hands and the first 10 scenarios, seed 2026, into
+`runs/hcc_smoke_<config>_<model>/` and `runs/hcc_smoke_scenarios_<config>_<model>/` (`:` in the
+model becomes `-`, e.g. `runs/hcc_smoke_self_qwen2.5-14b/`). Check each one:
+
+```bash
+less bj_smoke_cfg.<jobid>.out
+wc -l runs/hcc_smoke_*/hands.jsonl          # 20 per natural folder, 10 per scenario folder
+grep -c '"invalid": true' runs/hcc_smoke_*/decisions.jsonl
+```
+
+Delete `runs/hcc_smoke_*` before another smoke (re-using a folder resumes it).
+
+**Full runs**, once the smoke looks right:
+
+```bash
+hcc/submit_all.sh --dry-run     # check the 11 commands
+hcc/submit_all.sh               # label v3; `hcc/submit_all.sh v3b` for a fresh label
+```
+
+It prints one job id per run. The outputs are the `full_run.sbatch` folders, e.g.
+`runs/hcc_baseline_v3_prob_seed2026/` (7b) and `runs/hcc_baseline_v3_self_seed2026_qwen2.5-14b/`.
+
+Time limits: 8 h for every job except the two 14b self-evaluation configs (`self`,
+`prob_strat_self`), which get 16 h. The 7b baseline took ~1.1 h for 1000 hands on a P100
+(~2.3 s/decision); the 14b is roughly twice as slow, and self-evaluation makes a second model call
+per decision, so those two can approach 8 h. A longer limit can wait longer in the queue.
+
+**After a timeout**, resubmit just that run with the same arguments; it resumes from its folders:
+
+```bash
+sbatch --time=16:00:00 hcc/full_run.sbatch v3 qwen2.5:14b self
+```

@@ -4,8 +4,9 @@ and a user message with the current decision state.
 Baseline means no strategy hints, no probabilities, and no history of earlier hands.
 Harness components add to this per config (see agent/config.py):
 - probability tool: an odds block in the user message (odds_lines);
-- strategy information: not built yet (it will most likely extend the system prompt;
-  see the TODO in agent/llm_player.py).
+- strategy information: the principles (agent/strategy_info.py) appended to the system
+  prompt after one blank line (agent/llm_player.py);
+- self-evaluation: a second turn in the same conversation with recheck_prompt().
 """
 
 from agent.config import BASELINE, HarnessConfig
@@ -27,9 +28,25 @@ PEEK_LINE = "Dealer checked for blackjack: no blackjack."
 # The probability tool's block heading. The baseline prompt never contains it.
 ODDS_HEADER = "Odds (worked out from the cards left in the shoe):"
 
+# How the reply must end. Shared by the system prompt and the self-evaluation re-check.
+ACTION_LINE_FORM = "a final line of exactly the form `ACTION: <one of the legal actions>`"
+
 FORMAT_INSTRUCTION = (
-    "First explain your reasoning in two or three sentences. Then end your reply with a "
-    "final line of exactly the form `ACTION: <one of the legal actions>`."
+    "First explain your reasoning in two or three sentences. Then end your reply with "
+    f"{ACTION_LINE_FORM}."
+)
+
+# Self-evaluation: after the first reply, the same conversation continues with this
+# generic, content-free re-check (it names the first action, nothing else). Bump the
+# version if either text changes; it is recorded in the run metadata.
+SELF_EVAL_VERSION = "self-eval-v1"
+RECHECK_PROMPT = (
+    "You chose {first_action}. Before you commit, re-check that choice against the rules and your "
+    f"cards. Then reply with your final answer as {ACTION_LINE_FORM}."
+)
+RECHECK_PROMPT_INVALID = (
+    "Your reply did not contain a valid action. Re-check the rules and your cards, then reply with "
+    f"your final answer as {ACTION_LINE_FORM}."
 )
 
 
@@ -81,6 +98,13 @@ def build_system_prompt(rules: RuleSet) -> str:
     return "\n".join(lines)
 
 
+def recheck_prompt(first_action: str | None) -> str:
+    """The self-evaluation re-check for a first answer (None = the first reply was invalid)."""
+    if first_action is None:
+        return RECHECK_PROMPT_INVALID
+    return RECHECK_PROMPT.format(first_action=first_action)
+
+
 def build_user_prompt(state: DecisionState, config: HarnessConfig = BASELINE, rules: RuleSet = DEFAULT_RULES) -> str:
     """The decision prompt: the state lines, then any per-decision harness blocks, then legal actions.
 
@@ -101,7 +125,10 @@ def build_user_prompt(state: DecisionState, config: HarnessConfig = BASELINE, ru
 
 def odds_lines(state: DecisionState, rules: RuleSet = DEFAULT_RULES) -> list[str]:
     """The probability tool's block: hit-once bust chance, dealer final totals, stand-now odds."""
-    odds = compute_odds(state.player_cards, state.dealer_upcard, rules)
+    # On a split hand the other hand's first card (same value as ours) is gone too,
+    # matching how decisions are graded (analysis/ev_loss.py).
+    extra = (state.player_cards[0],) if state.from_split else ()
+    odds = compute_odds(state.player_cards, state.dealer_upcard, rules, extra_removed=extra)
     dealer_label = "Dealer final total"
     if card_value(state.dealer_upcard) in (10, 11):  # the dealer peeked, so the odds assume no blackjack
         dealer_label += " (no blackjack)"

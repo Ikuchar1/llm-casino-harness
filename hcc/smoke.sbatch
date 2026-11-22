@@ -61,7 +61,9 @@ if [ -z "${READY:-}" ]; then
 fi
 echo "ollama serve is up"
 
-ollama pull qwen2.5:7b
+if ! ollama show qwen2.5:7b > /dev/null 2>&1; then  # pull only if missing (see full_run.sbatch)
+    ollama pull qwen2.5:7b
+fi
 
 # Call the env's python by absolute path instead of `conda activate`. sbatch copies
 # the submitting shell's environment, so if bj was active at submit time conda sees

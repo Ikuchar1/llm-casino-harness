@@ -71,3 +71,13 @@ def test_stand_on_20_pushes_with_dealer_20():
     odds = compute_odds(["10", "K"], "10")
     assert odds.stand_push == pytest.approx(odds.dealer[20])
     assert odds.stand_lose == pytest.approx(odds.dealer[21])
+
+
+def test_extra_removed_cards_are_taken_out_of_the_shoe_as_in_ev_grading():
+    # A split hand: the other split card (an 8) is gone from the shoe too.
+    cards, upcard = ["8", "3"], "5"
+    odds = compute_odds(cards, upcard, extra_removed=("8",))
+    assert odds.dealer == pytest.approx(dealer_distribution(upcard, shoe_probabilities(cards + [upcard, "8"])))
+    stand_ev = action_evs(cards, upcard, can_double=False, can_split=False, extra_removed=("8",))["stand"]
+    assert odds.stand_win - odds.stand_lose == pytest.approx(stand_ev)
+    assert odds.dealer != compute_odds(cards, upcard).dealer

@@ -33,6 +33,18 @@ DECISION_FIELDS = [
     "hand_payout", "sub_hand_payout", "sub_hand_result", "sub_hand_final_cards",
 ]
 
+# The `self_eval` dict on every decision row of a self-evaluation config (rows of other
+# configs have no `self_eval` key). analysis/paired.flip_stats reads it. The top-level
+# parsed_action / action_taken / correct / invalid are the final (graded) answer;
+# done_reason, eval_count and latency_s here are the second call's.
+SELF_EVAL_FIELDS = [
+    "first_action", "first_valid", "first_correct", "first_invalid_reason",
+    "second_action", "second_valid", "second_invalid_reason",
+    "final_action", "flipped",
+    "first_raw", "second_raw", "recheck_prompt",
+    "done_reason", "eval_count", "latency_s",
+]
+
 # Every field a hand row must have.
 HAND_FIELDS = [
     "run_id", "model", "harness_config", "run_seed", "hand_number", "shoe_seed",
@@ -87,7 +99,7 @@ def decision_rows(record: HandRecord, details: list[DecisionDetail], info: RunIn
         optimal = best_legal_action(state)
         invalid = not decision.is_valid
         sub_hand = record.player_hands[state.hand_index]  # indices are stable: only one split is allowed
-        rows.append({
+        row = {
             "run_id": info.run_id,
             "model": info.model,
             "model_digest": info.model_digest,
@@ -125,8 +137,33 @@ def decision_rows(record: HandRecord, details: list[DecisionDetail], info: RunIn
             "sub_hand_payout": sub_hand.payout,
             "sub_hand_result": result_word(sub_hand.payout),
             "sub_hand_final_cards": list(sub_hand.cards),
-        })
+        }
+        if detail.self_eval is not None:
+            row["self_eval"] = self_eval_fields(detail, optimal)
+        rows.append(row)
     return rows
+
+
+def self_eval_fields(detail: DecisionDetail, optimal: str) -> dict[str, Any]:
+    """The decision row's `self_eval` dict (keys: SELF_EVAL_FIELDS)."""
+    se = detail.self_eval
+    return {
+        "first_action": se.first_action,
+        "first_valid": se.first_action is not None,
+        "first_correct": se.first_action == optimal,
+        "first_invalid_reason": se.first_invalid_reason,
+        "second_action": se.second_action,
+        "second_valid": se.second_action is not None,
+        "second_invalid_reason": se.second_invalid_reason,
+        "final_action": se.final_action,
+        "flipped": se.first_action != se.final_action,
+        "first_raw": se.first_raw,
+        "second_raw": se.second_raw,
+        "recheck_prompt": se.recheck_prompt,
+        "done_reason": se.done_reason,
+        "eval_count": se.eval_count,
+        "latency_s": round(se.latency_s, 3),
+    }
 
 
 def hand_row(record: HandRecord, rows: list[dict[str, Any]], info: RunInfo) -> dict[str, Any]:

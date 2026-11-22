@@ -220,6 +220,21 @@ def test_prob_prompt_split_hand_keeps_the_split_line_before_the_odds():
     assert lines[-1] == "Legal actions: hit, stand, double"
 
 
+def test_prob_prompt_on_a_split_hand_also_removes_the_other_split_card():
+    state = make_state(player_cards=("8", "3"), total=11, from_split=True, hand_index=1, dealer_upcard="5")
+    with_other = compute_odds(["8", "3"], "5", extra_removed=("8",))
+    without = compute_odds(["8", "3"], "5")
+    text = build_user_prompt(state, PROB)
+    assert f"win {100 * with_other.stand_win:.1f}%, push" in text
+    assert f"{100 * with_other.stand_win:.1f}" != f"{100 * without.stand_win:.1f}"  # the test can tell them apart
+
+
+def test_prob_prompt_on_an_unsplit_hand_removes_only_the_visible_cards():
+    odds = compute_odds(["8", "3"], "5")
+    text = build_user_prompt(make_state(player_cards=("8", "3"), total=11, dealer_upcard="5"), PROB)
+    assert f"win {100 * odds.stand_win:.1f}%, push" in text
+
+
 @pytest.mark.parametrize("phrase", ["basic strategy", "recommend", "should", "chart", "expected value", " ev "])
 def test_prob_prompt_gives_odds_but_no_advice_or_ev(phrase):
     text = build_user_prompt(make_state(dealer_upcard="6"), PROB).lower()
