@@ -347,8 +347,12 @@ def _flips_panel(ax, rows, kind, extent) -> None:
         ax.barh(yb, -f["breaks"], height=0.44, color=SURFACE, edgecolor=color, hatch="//////", linewidth=0.9,
                 zorder=2)
         pad = 0.03 * extent
-        ax.text(f["fixes"] + pad, yb, str(f["fixes"]), va="center", ha="left", fontsize=7, color=INK)
-        ax.text(-f["breaks"] - pad, yb, str(f["breaks"]), va="center", ha="right", fontsize=7, color=INK)
+        if f["fixes"] == 0 and f["breaks"] == 0:
+            ax.text(0, yb, "no flips", va="center", ha="center", fontsize=6.5, color=INK_MUTED, style="italic",
+                    zorder=4, bbox=dict(boxstyle="square,pad=0.15", facecolor=SURFACE, edgecolor="none"))
+        else:
+            ax.text(f["fixes"] + pad, yb, str(f["fixes"]), va="center", ha="left", fontsize=7, color=INK)
+            ax.text(-f["breaks"] - pad, yb, str(f["breaks"]), va="center", ha="right", fontsize=7, color=INK)
         net = f["fixes"] - f["breaks"]
         ax.text(0, k + 0.3, f"net {net:+d} · wrong→wrong {f['neutral']} · invalid {f['second_invalid']}",
                 va="center", ha="center", fontsize=6, color=INK_2, zorder=4,
