@@ -38,6 +38,20 @@ _Avoid_: Change, revision
 A basic strategy cell whose correct action follows directly from the strategy information's principles; every other cell is uncovered.
 _Avoid_: Hinted hand, rule hand
 
+### Showcase demo
+
+**Seat**:
+One of the three players in a demo hand: the visitor, the baseline, and the full harness. Every seat sees the same cards and makes one first decision.
+_Avoid_: Player slot, lane, area
+
+**Full harness**:
+The cumulative configuration with every blackjack harness component on: probability tool, strategy information, and self-evaluation.
+_Avoid_: Entire harness config, best config
+
+**Visitor**:
+A person playing the demo at the showcase or a presentation.
+_Avoid_: User, participant, subject
+
 ### Blackjack
 
 **Rule set**:

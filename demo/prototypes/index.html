@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Play Screen Prototypes</title>
+<style>
+  :root{--bg:#0d1a14;--fg:#eee9dc;--muted:#9aa79f;--line:#24392e;--card:#12241b;--full:#1baf7a;--you:#2a78d6;--base:#898781}
+  *{box-sizing:border-box}
+  body{margin:0;min-height:100vh;background:radial-gradient(ellipse at 50% 0%,#17382a,var(--bg) 70%);color:var(--fg);font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;padding:6vh 16px}
+  main{max-width:1100px;margin:0 auto}
+  h1{font-size:clamp(28px,4vw,44px);margin:0 0 6px;letter-spacing:-.02em}
+  p.lead{color:var(--muted);margin:0 0 36px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:20px}
+  a.card{display:block;text-decoration:none;color:inherit;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:24px;transition:transform .2s,border-color .2s}
+  a.card:hover{transform:translateY(-3px);border-color:var(--full)}
+  .tag{font-size:12px;letter-spacing:.2em;text-transform:uppercase;color:var(--muted)}
+  h2{margin:8px 0 8px;font-size:24px}
+  .card p{margin:0;color:var(--muted)}
+  .sw{display:flex;gap:6px;margin-top:18px}
+  .sw i{width:22px;height:6px;border-radius:3px}
+  footer{margin-top:36px;color:var(--muted);font-size:14px}
+</style>
+</head>
+<body>
+<main>
+  <h1>Play screen prototypes</h1>
+  <p class="lead">Three throwaway takes on the showcase play screen. The data is fake: 3 hands, then the reveal.</p>
+  <div class="grid">
+    <a class="card" href="a.html"><span class="tag">Version A</span><h2>Classic Felt</h2><p>A top-down half-moon table with a leather rail, lamp lighting, striped casino chips and sealed answer chips.</p><div class="sw"><i style="background:var(--base)"></i><i style="background:var(--full)"></i><i style="background:var(--you)"></i></div></a>
+    <a class="card" href="b.html"><span class="tag">Version B</span><h2>Neon Floor</h2><p>A cinematic neon table on a tilted glowing plane, with letterbox bars, a glitch reveal and typewriter reasoning.</p><div class="sw"><i style="background:var(--base)"></i><i style="background:var(--full)"></i><i style="background:var(--you)"></i></div></a>
+    <a class="card" href="c.html"><span class="tag">Version C</span><h2>Bold Minimal</h2><p>A matte table with huge bold type, three column seats and an ivory results sheet.</p><div class="sw"><i style="background:var(--base)"></i><i style="background:var(--full)"></i><i style="background:var(--you)"></i></div></a>
+  </div>
+  <footer>Keyboard shortcuts in B and C: H, S, D, P. Click a results row to expand the reasoning and odds.</footer>
+</main>
+</body>
+</html>
