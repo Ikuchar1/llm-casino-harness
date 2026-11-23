@@ -227,3 +227,7 @@ runs/
 
 # Generated ablation report (scripts/ablation_report.py --out results/)
 /results/
+
+# Showcase demo: visitor answers written by scripts/demo_server.py
+demo/visitor_results.jsonl
+demo/*.tmp
