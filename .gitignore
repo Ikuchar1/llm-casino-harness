@@ -224,3 +224,6 @@ __marimo__/
 
 # Run outputs (logs, charts) from experiment runs
 runs/
+
+# Generated ablation report (scripts/ablation_report.py --out results/)
+/results/
