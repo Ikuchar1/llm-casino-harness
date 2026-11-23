@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Can You Beat the AI?</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="canvas">
+  <div class="lamp"></div>
+
+  <header>
+    <div class="brand">The <b>Basic Strategy</b> Room<span class="pres hide" id="presTag">Presenter</span></div>
+    <div class="plaque" id="plaque">
+      <div class="live" id="live">LIVE</div>
+      <div class="stat" data-who="visitor"><div><i>Visitors</i><em>—</em></div><div class="bar"><b style="background:var(--you)"></b></div></div>
+      <div class="stat" data-who="baseline"><div><i>Baseline</i><em>—</em></div><div class="bar"><b style="background:var(--base)"></b></div></div>
+      <div class="stat" data-who="full"><div><i>Full harness</i><em>—</em></div><div class="bar"><b style="background:var(--full)"></b></div></div>
+      <div class="n" id="plaqueN">0 visitors</div>
+    </div>
+    <div class="pips" id="pips"></div>
+  </header>
+
+  <div class="table"><div class="felt">
+    <svg class="print" viewBox="0 0 1804 756">
+      <defs>
+        <path id="arc1" d="M 520 366 Q 902 486 1284 366"/>
+        <path id="arc2" d="M 560 410 Q 902 526 1244 410"/>
+      </defs>
+      <text font-size="32"><textPath href="#arc1" startOffset="50%" text-anchor="middle">BLACKJACK PAYS 3 TO 2</textPath></text>
+      <text font-size="20"><textPath href="#arc2" startOffset="50%" text-anchor="middle">DEALER STANDS ON ALL 17s</textPath></text>
+    </svg>
+  </div></div>
+  <div class="discard" id="discard"></div>
+  <div class="shoe" id="shoe"></div>
+
+  <div class="dealer">
+    <div class="hand" id="dealerHand"><div class="tot"></div><div class="cards"></div></div>
+    <div class="lbl">Dealer <small id="dealerFor"></small></div>
+  </div>
+  <div class="situation" id="situation"></div>
+  <div class="seal" id="seal"><div><small>Basic strategy</small><b id="sealAct">Hit</b></div></div>
+
+  <div class="seat baseline" data-seat="baseline">
+    <div class="name"><b>Baseline</b><small>AI</small></div>
+    <div class="think"><i></i><i></i><i></i></div>
+    <div class="seat-body">
+      <div class="slot"></div>
+      <div class="hands"></div>
+    </div>
+  </div>
+  <div class="seat you" data-seat="you">
+    <div class="seat-body">
+      <div class="hands"></div>
+      <div class="slot"></div>
+    </div>
+    <div class="name"><b>You</b></div>
+  </div>
+  <div class="seat full" data-seat="full">
+    <div class="name"><b>Full harness</b><small>AI + tools</small></div>
+    <div class="think"><i></i><i></i><i></i></div>
+    <div class="seat-body">
+      <div class="slot"></div>
+      <div class="hands"></div>
+    </div>
+  </div>
+
+  <div class="controls" id="controls">
+    <div class="chips" id="chips" style="display:flex;gap:40px">
+      <button class="chip hit" data-act="hit"><span>Hit</span><kbd>H</kbd></button>
+      <button class="chip stand" data-act="stand"><span>Stand</span><kbd>S</kbd></button>
+      <button class="chip double" data-act="double"><span>Double</span><kbd>D</kbd></button>
+      <button class="chip split" data-act="split"><span>Split</span><kbd>P</kbd></button>
+    </div>
+    <div id="ctas" style="display:flex;gap:30px;align-items:center"></div>
+  </div>
+  <div class="tapnote hide" id="tapnote">or tap anywhere</div>
+  <div class="note">The agents played these exact hands earlier (<span id="modelName">qwen2.5:7b</span>).</div>
+
+  <div class="banner" id="banner"></div>
+
+  <div class="attract hide" id="attract">
+    <div class="call"><h1>Can you beat the AI?</h1><p>Tap to play</p></div>
+    <div class="bigboard" id="attractBoard"></div>
+  </div>
+
+  <div class="scrim" id="scrim"></div>
+  <div class="tally" id="tally">
+    <h2 id="tallyTitle">The score</h2>
+    <div class="row" id="tallyRow"></div>
+    <div class="verdict" id="verdict"></div>
+  </div>
+
+  <div class="results" id="results">
+    <div class="head">
+      <h2>How everyone played</h2>
+      <div class="score" id="score"></div>
+    </div>
+    <div class="res-grid">
+      <div class="res-table">
+        <table>
+          <thead><tr><th>Hand</th><th>You</th><th>Baseline</th><th>Full harness</th><th>Basic strategy</th></tr></thead>
+          <tbody id="resBody"></tbody>
+        </table>
+      </div>
+      <div class="res-side">
+        <div class="bigboard stack" id="resultsBoard"></div>
+        <button class="cta next" id="againBtn">Play again</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel" id="panel">
+    <h3>Presenter <small id="sessionInfo">0 hands played</small></h3>
+    <div class="tools">
+      <input id="search" type="search" placeholder="Search: 16 vs 10, soft 18, pair of 8s" autocomplete="off" spellcheck="false">
+      <button class="pb" id="randomBtn">Random</button>
+    </div>
+    <div class="matches" id="matches"></div>
+    <div class="chart" id="chart"></div>
+    <div class="legend">
+      <span><i style="background:#8e2430"></i>Hit</span><span><i style="background:#2b3e8f"></i>Stand</span>
+      <span><i style="background:#a8771a"></i>Double</span><span><i style="background:#5a2a87"></i>Split</span>
+      <span><i style="background:#2a2622"></i>Full harness not run yet</span>
+    </div>
+    <div class="tools">
+      <button class="pb gold" id="seeResultsBtn">See results</button>
+      <button class="pb" id="closePanelBtn">Hide panel</button>
+      <button class="pb" id="exitPresBtn">Exit presenter</button>
+    </div>
+  </div>
+
+  <div class="empty hide" id="empty"><div><h2 id="emptyTitle"></h2><p id="emptyText"></p></div></div>
+</div>
+<script src="engine.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
