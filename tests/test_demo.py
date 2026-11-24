@@ -304,6 +304,7 @@ def test_grade_submission_regrades_against_basic_strategy(board_data):
 @pytest.mark.parametrize("body", [
     {}, {"deals": []}, {"deals": [{"id": "zzz", "action": "hit"}]}, {"deals": [{"id": "a", "action": "split"}]},
     {"deals": [{"id": "a", "action": "hit"}, {"id": "a", "action": "hit"}]}, {"deals": ["a"]},
+    {"deals": [{"id": ["a"], "action": "hit"}]}, {"deals": [{"id": 1, "action": "hit"}]},
 ])
 def test_grade_submission_rejects_bad_bodies(board_data, body):
     with pytest.raises(ValueError):
@@ -393,3 +394,67 @@ def test_server_serves_the_page_but_not_the_results_file(board_data, tmp_path):
         assert http(base + "/api/nothing")[0] == 404
     finally:
         stop(server)
+
+
+@pytest.mark.parametrize("path", [
+    "/visitor_results.jsonl", "/./visitor_results.jsonl", "/%76isitor_results.jsonl",
+    "//visitor_results.jsonl", "/x/../visitor_results.jsonl", "/visitor_results.jsonl?x=1",
+    "/other.jsonl", "/results.tmp",
+])
+def test_server_hides_the_results_file_however_the_path_is_spelled(board_data, tmp_path, path):
+    data_path, results_path = tmp_path / "demo_data.json", tmp_path / "visitor_results.jsonl"
+    data_path.write_text(json.dumps(board_data))
+    results_path.write_text('{"deals": ["a"], "correct": [true]}\n')
+    (tmp_path / "other.jsonl").write_text("{}\n")
+    (tmp_path / "results.tmp").write_text("{}\n")
+    server = server_mod.make_server("127.0.0.1", 0, data_path, results_path, directory=tmp_path)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{server.server_address[1]}"
+    try:
+        assert http(base + "/demo_data.json")[0] == 200
+        assert http(base + path)[0] == 404
+        head = urllib.request.Request(base + path, method="HEAD")
+        with pytest.raises(urllib.error.HTTPError) as error:
+            urllib.request.urlopen(head, timeout=5)
+        assert error.value.code == 404
+    finally:
+        stop(server)
+
+
+def raw_post(base, body, length):
+    """POST with a hand-written Content-Length, which urllib would otherwise fix up."""
+    import http.client
+    host, port = base.rsplit("/", 1)[1].split(":")
+    conn = http.client.HTTPConnection(host, int(port), timeout=5)
+    try:
+        conn.putrequest("POST", "/api/results")
+        conn.putheader("Content-Type", "application/json")
+        conn.putheader("Content-Length", length)
+        conn.endheaders()
+        conn.send(body)
+        return conn.getresponse().status
+    finally:
+        conn.close()
+
+
+@pytest.mark.parametrize("body,length", [
+    (b"{}", "abc"),
+    (b"{}", "-5"),
+    (b"", "0"),
+    (b"{}", "99999999"),
+    (b'{"deals": [{"id": ["a"], "action": "hit"}]}', None),
+    (b'{"deals": [{"id": {"x": 1}, "action": "hit"}]}', None),
+    (b'{"deals": [{"id": 7, "action": "hit"}]}', None),
+    (b'{"deals": [{"id": "a", "action": ["hit"]}]}', None),
+    (b"not json", None),
+    (b"\xff\xfe", None),
+])
+def test_server_answers_malformed_posts_with_400(board_data, tmp_path, body, length):
+    data_path, results_path = tmp_path / "demo_data.json", tmp_path / "visitor_results.jsonl"
+    data_path.write_text(json.dumps(board_data))
+    server, base = start(data_path, results_path)
+    try:
+        assert raw_post(base, body, length if length is not None else str(len(body))) == 400
+    finally:
+        stop(server)
+    assert not results_path.exists()

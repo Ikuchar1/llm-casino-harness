@@ -22,6 +22,7 @@ scripts/export_demo_data.py shows up without restarting the server.
 
 import argparse
 import json
+import os
 import sys
 import threading
 from datetime import datetime
@@ -109,7 +110,10 @@ def grade_submission(data: dict[str, Any], body: Any) -> dict[str, Any]:
     for deal in deals:
         if not isinstance(deal, dict):
             raise ValueError("each deal must be an object")
-        scenario = by_id.get(deal.get("id"))
+        deal_id = deal.get("id")
+        if not isinstance(deal_id, str):
+            raise ValueError("each deal id must be a string")
+        scenario = by_id.get(deal_id)
         if scenario is None:
             raise ValueError(f"unknown deal id {deal.get('id')!r}")
         action = deal.get("action")
@@ -165,8 +169,16 @@ class DemoStore:
 class DemoHandler(SimpleHTTPRequestHandler):
     store: DemoStore  # set by make_server
 
-    # The results file lives in demo/ but is never served.
-    HIDDEN = ("/visitor_results.jsonl",)
+    # The results file lives in demo/ but is never served, nor is any other .jsonl or a
+    # half-written .tmp. Checked on the resolved file path, so "/./x" or "%76" spellings
+    # of a hidden name are caught too.
+    HIDDEN_SUFFIXES = (".jsonl", ".tmp")
+
+    def _hidden(self) -> bool:
+        real = os.path.realpath(self.translate_path(self.path))
+        if real.endswith(self.HIDDEN_SUFFIXES):
+            return True
+        return real == os.path.realpath(self.store.results_path)
 
     def end_headers(self) -> None:
         self.send_header("Cache-Control", "no-store")
@@ -180,13 +192,13 @@ class DemoHandler(SimpleHTTPRequestHandler):
         path = self.path.split("?", 1)[0]
         if path == "/api/board":
             return self._json(HTTPStatus.OK, self.store.board())
-        if path.startswith("/api/") or path in self.HIDDEN or path.endswith(".tmp"):
+        if path.startswith("/api/") or self._hidden():
             return self._json(HTTPStatus.NOT_FOUND, {"error": "not found"})
         return super().do_GET()
 
     def do_HEAD(self) -> None:
         path = self.path.split("?", 1)[0]
-        if path.startswith("/api/") or path in self.HIDDEN:
+        if path.startswith("/api/") or self._hidden():
             self.send_error(HTTPStatus.NOT_FOUND)
             return
         super().do_HEAD()
@@ -194,13 +206,13 @@ class DemoHandler(SimpleHTTPRequestHandler):
     def do_POST(self) -> None:
         if self.path.split("?", 1)[0] != "/api/results":
             return self._json(HTTPStatus.NOT_FOUND, {"error": "not found"})
-        length = int(self.headers.get("Content-Length") or 0)
-        if length <= 0 or length > MAX_BODY_BYTES:
-            return self._json(HTTPStatus.BAD_REQUEST, {"error": "missing or oversized body"})
         try:
+            length = int(self.headers.get("Content-Length") or 0)
+            if length <= 0 or length > MAX_BODY_BYTES:
+                raise ValueError("missing or oversized body")
             body = json.loads(self.rfile.read(length))
             row = grade_submission(self.store.data(), body)
-        except (ValueError, json.JSONDecodeError) as error:
+        except (TypeError, ValueError) as error:  # json.JSONDecodeError is a ValueError
             return self._json(HTTPStatus.BAD_REQUEST, {"error": str(error)})
         self.store.append(row)
         return self._json(HTTPStatus.OK, {"stored": row, "board": self.store.board()})
