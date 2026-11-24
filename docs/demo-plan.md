@@ -20,7 +20,7 @@ The terms are defined in `CONTEXT.md` (Seat, Full harness, Visitor). The demo is
 
 A dark casino table:
 - Green felt, animated card dealing, three seats, and chip-style action buttons.
-- The reveal flips the agents' cards, then the results table slides up.
+- The reveal flips the agents' chips and plays their hands out at the same table.
 - The live board uses the paper chart palette.
 
 First, 2–3 throwaway prototypes of the play screen let Ian pick a direction.
@@ -29,16 +29,16 @@ First, 2–3 throwaway prototypes of the play screen let Ian pick a direction.
 
 - **Direction:** prototype A (Classic Felt), scaled up a lot because it was hard to see.
 - **Play-out:** each hand plays out to the end, but only the first decision is graded. The visitor draws from the scenario's forced shoe, which is the same card order the agents saw. The agents' full hands, splits included, are replayed card by card from the run files (`hands.jsonl`, `decisions.jsonl`). The win/loss result is for fun only. Splits follow the rule set: one split, and split aces get one card each.
-- **Reveal:** one hand at a time, borrowed from prototype C, with tap to advance.
-  1. The deal is shown again along with the visitor's move.
-  2. The Baseline chip flips, then the Full harness chip.
-  3. The basic strategy answer stamps in, and ✓/✗ appears on each seat.
-  4. Each seat's hand plays out.
-  After the last hand comes the score tally, then the summary table with tappable rows.
+- **Reveal:** automatic and in place, right after the visitor's hand plays out. There is no replay, and the visitor does not need to tap anything. The sequence takes about 5–7 s:
+  1. The Baseline chip flips, then the Full harness chip.
+  2. The basic strategy answer stamps in, and ✓/✗ appears on each seat.
+  3. Both agent seats play out card by card, splits included.
+  4. The dealer resolves, and each seat shows its outcome badge.
+  A tap anywhere during the sequence speeds it up. Afterwards, a countdown ring on "Next hand" advances to the next hand after 4 s, and tapping the button advances at once. After the last hand comes the score tally, then the summary table with tappable rows.
 - **Attract mode:** after about 30 s idle, the table auto-plays a demo hand under a "Can you beat the AI? Tap to play" banner, with the live board visible. Any tap starts a game.
 - **Presenter mode:** opened by a hidden keyboard shortcut.
   - Ian picks each deal, or random, and plays any number of hands.
-  - "See results" shows the session comparison with the same one-by-one reveal.
+  - Each hand uses the same automatic reveal. "See results" shows the score tally, then the session comparison table.
   - Presenter hands are not recorded to the live board.
 
 ## Later

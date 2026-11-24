@@ -2,8 +2,9 @@
  *
  * A Visitor plays three random deals from the scenario set, one first decision each,
  * against two agent Seats that played the exact same cards earlier: Baseline and the
- * Full harness. After the third hand the page reveals, hand by hand, what each Seat
- * chose, what basic strategy says, and how each Seat's hand played out.
+ * Full harness. All three Seats get the same opening cards. As soon as the visitor's hand
+ * is done, the same table reveals, with no taps, what each agent chose, what basic
+ * strategy says, and how each Seat's hand played out; then the next hand starts on its own.
  *
  * Data: demo_data.json (scripts/export_demo_data.py). Live board: /api/board and
  * /api/results (scripts/demo_server.py). Engine: engine.js (window.BJ).
@@ -39,6 +40,8 @@
     board: null, online: false,
     localResults: [],      // when the server is not there (file://), the board is this session's
     lastInput: Date.now(),
+    revealing: false,      // the automatic reveal sequence is running (a tap fast-forwards it)
+    phase: "",             // reveal step, for the end-to-end check: flip seal marks playout dealer hold
   };
   var scale = 1;
   function setMode(m) { state.mode = m; canvas.dataset.mode = m; }
@@ -53,29 +56,60 @@
   }
   function ck(g) { if (g !== gen) throw ABORT; }
   function sleep(ms, g) {
+    if (ff.on) { ms *= FF_TEMPO; hurryAnimations(); }
     return new Promise(function (resolve, reject) {
       var entry = { reject: reject };
-      pending.push(entry);
-      setTimeout(function () {
+      function done() {
         pending = pending.filter(function (p) { return p !== entry; });
         if (g !== gen) reject(ABORT); else resolve();
-      }, ms);
+      }
+      var t = setTimeout(done, ms);
+      entry.wake = function () { clearTimeout(t); done(); };
+      pending.push(entry);
     });
+  }
+
+  // ---------- fast-forward (a tap during the reveal sequence) ----------
+  // The sequence keeps every step but runs them at FF_TEMPO: pending waits end now, and
+  // running card/chip/seal animations finish fast.
+  var FF_TEMPO = 0.12;
+  var ff = { on: false };
+  function tempo() { return ff.on ? FF_TEMPO : 1; }
+  function hurryAnimations() {
+    if (!document.getAnimations) return;
+    document.getAnimations().forEach(function (a) {
+      var t = a.effect && a.effect.target;
+      if (!t || !t.closest || !t.closest(".seat, .dealer, .seal")) return;
+      if (a.effect.getTiming().iterations === Infinity) return;
+      a.playbackRate = 1 / FF_TEMPO;
+    });
+  }
+  function fastForward() {
+    if (!state.revealing || ff.on) return;
+    ff.on = true;
+    $("#tapnote").classList.add("hide");
+    hurryAnimations();
+    pending.slice().forEach(function (p) { if (p.wake) p.wake(); });
   }
   function swallow(e) { if (e !== ABORT) { console.error(e); } }
 
-  // One "advance" at a time: the big Next button, a tap anywhere, Space/Enter/→.
-  var advanceHook = null;
+  // One "advance" at a time: the big Next button, Space/Enter/→, and (unless opts.noTap)
+  // a tap anywhere. opts.countdown (ms) advances on its own and draws a ring on the button.
+  var advanceHook = null, advanceTap = false;
   function waitAdvance(label, g, opts) {
     opts = opts || {};
     return new Promise(function (resolve, reject) {
-      var entry = { reject: function (e) { advanceHook = null; hideCtas(); reject(e); } };
+      var timer = null;
+      var entry = { reject: function (e) { clearTimeout(timer); advanceHook = null; hideCtas(); reject(e); } };
       pending.push(entry);
-      setCtas([{ label: label, cls: "next", fn: go }].concat(opts.extra || []));
+      setCtas([{ label: label, cls: "next", fn: go, countdown: opts.countdown }].concat(opts.extra || []));
+      $("#tapnote").textContent = "or tap anywhere";
       $("#tapnote").classList.toggle("hide", !!opts.noTap);
-      advanceHook = opts.noTap ? null : go;
+      advanceHook = go; advanceTap = !opts.noTap;
+      if (opts.countdown) timer = setTimeout(go, opts.countdown);
       function go() {
         if (g !== gen) return;
+        clearTimeout(timer);
         pending = pending.filter(function (p) { return p !== entry; });
         advanceHook = null; hideCtas();
         resolve();
@@ -88,6 +122,11 @@
       var el = document.createElement("button");
       el.className = "cta " + (b.cls || "");
       el.textContent = b.label;
+      if (b.countdown) {
+        el.classList.add("timed");
+        el.style.setProperty("--count", b.countdown + "ms");
+        el.insertAdjacentHTML("beforeend", '<svg class="ring" viewBox="0 0 40 40" aria-hidden="true"><circle class="track" cx="20" cy="20" r="16"/><circle class="prog" cx="20" cy="20" r="16" pathLength="100"/></svg>');
+      }
       el.addEventListener("click", function (e) { e.stopPropagation(); b.fn(); });
       box.appendChild(el);
     });
@@ -204,36 +243,59 @@
     });
   }
 
-  function speedOf(opts) { return (opts && opts.speed) || 1; }
+  function speedOf(opts) { return ((opts && opts.speed) || 1) * tempo(); }
 
-  /** Animate engine events [from, to) for one seat and the dealer. */
+  /** Run `mutate`, then slide `els` from where they were to where the new layout puts
+   * them (FLIP), so a seat that widens as cards land glides instead of jumping. */
+  function glide(els, mutate, dur) {
+    var before = els.map(function (e) { return e.getBoundingClientRect(); });
+    mutate();
+    els.forEach(function (e, i) {
+      if (!e.isConnected || !e.animate) return;
+      var a = before[i], b = e.getBoundingClientRect();
+      var dx = (a.left - b.left) / scale, dy = (a.top - b.top) / scale;
+      if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return;
+      e.animate([{ transform: "translate(" + dx + "px," + dy + "px)" }, { transform: "none" }], { duration: dur || 320, easing: "cubic-bezier(.2,.8,.2,1)" });
+    });
+  }
+  function seatMovers(seat) { return $$(".hand, .side", seat.el); }
+  function setCount(cardsEl) { cardsEl.dataset.n = cardsEl.children.length; }
+
+  /** Animate engine events [from, ...) for one seat and the dealer. With opts.stopAtDealer
+   * it stops at the dealer's turn (the hole card reveal) and returns that event's index. */
   async function playEvents(seat, events, from, g, opts) {
-    var sp = speedOf(opts), shoe = $("#shoe");
+    var shoe = $("#shoe");
     for (var k = from; k < events.length; k++) {
-      var ev = events[k];
+      var ev = events[k], sp = speedOf(opts);
       ck(g);
+      if (opts && opts.stopAtDealer && (ev.type === "reveal" || ev.type === "settle")) return k;
       if (ev.type === "deal" && ev.to === "player") {
-        var view = seat.hands[ev.hand] || handView(seat, ev.hand);
-        var el = cardEl(ev.card, false);
-        view.cardsEl.appendChild(el);
+        var view = seat.hands[ev.hand], el = cardEl(ev.card, false);
+        glide(seatMovers(seat), function () {
+          view = view || handView(seat, ev.hand);
+          view.cardsEl.appendChild(el);
+          setCount(view.cardsEl);
+        }, 380 * sp);
         view.ranks.push(ev.card.r);
         await flyFrom(el, shoe, { dur: 520 * sp });
         showTotal(view.totEl, view.ranks, { noBJ: seat.hands.length > 1 });
         await sleep(120 * sp, g);
       } else if (ev.type === "deal") {
-        var del = cardEl(ev.card, !!ev.down);
-        $(".cards", dealer.el).appendChild(del);
+        var del = cardEl(ev.card, !!ev.down), dcards = $(".cards", dealer.el);
+        glide([dealer.el], function () { dcards.appendChild(del); setCount(dcards); }, 380 * sp);
         dealer.cards.push(ev.card.r);
         if (ev.down) dealer.down = del;
         await flyFrom(del, shoe, { dur: 520 * sp });
         showDealerTotal();
         await sleep(160 * sp, g);
       } else if (ev.type === "split") {
-        var src = seat.hands[ev.hand];
-        seat.handsEl.classList.add("split");
-        var moved = src.cardsEl.lastElementChild;
-        var nv = handView(seat, ev.hand + 1);
-        nv.cardsEl.appendChild(moved);
+        var src = seat.hands[ev.hand], moved = src.cardsEl.lastElementChild, nv = null;
+        glide(seatMovers(seat), function () {
+          seat.handsEl.classList.add("split");
+          nv = handView(seat, ev.hand + 1);
+          nv.cardsEl.appendChild(moved);
+          setCount(src.cardsEl); setCount(nv.cardsEl);
+        }, 420 * sp);
         nv.ranks.push(src.ranks.pop());
         if (moved.animate) moved.animate([{ transform: "translateX(-60px)" }, { transform: "none" }], { duration: 380 * sp, easing: "ease-out" });
         showTotal(src.totEl, src.ranks); showTotal(nv.totEl, nv.ranks);
@@ -261,15 +323,17 @@
     var visible = dealer.down ? dealer.cards.slice(0, 1) : dealer.cards;
     showTotal(tot, visible);
   }
-  function showOutcome(seat, round) {
+  /** Outcome badges under each of the seat's hands. `note` (optional) is a second line,
+   * used when this seat's dealer drew different cards from the dealer on the table. */
+  function showOutcome(seat, round, note) {
     round.hands.forEach(function (h, i) {
       var v = seat.hands[i];
       if (!v) return;
-      var word = h.result, amt = h.payout;
+      var word = h.result, amt = h.payout, bust = BJ.handTotal(v.ranks).total > 21;
       var text = word === "win" ? (amt === 1.5 ? "Blackjack +1.5" : "Win +" + amt) : word === "loss" ? "Lose " + amt : "Push";
-      if (BJ.handTotal(v.ranks).total > 21) text = "Bust " + amt;
+      if (bust) text = "Bust " + amt;
       v.badgeEl.className = "badge " + word;
-      v.badgeEl.textContent = text;
+      v.badgeEl.innerHTML = "<span>" + esc(text) + "</span>" + (note && !bust ? "<small>" + esc(note) + "</small>" : "");
       v.badgeEl.classList.add("on");
     });
   }
@@ -359,7 +423,28 @@
   });
 
   // ---------- playing one deal (visitor or presenter) ----------
+  function seatEntry(s, k) { var e = s.seats[k]; return e && e.status === "answered" ? e : null; }
+
+  /** Deal the opening cards (the round's first four events) to every seat in `keys` at
+   * once, a short stagger between seats, then the dealer's card. */
+  async function dealOpening(round, keys, g, opts) {
+    for (var k = 0; k < 4; k++) {
+      var ev = round.events[k];
+      if (ev.to === "player") {
+        await Promise.all(keys.map(function (key, n) {
+          return sleep(90 * n * tempo(), g).then(function () { return playEvents(seats[key], [ev], 0, g, opts); });
+        }));
+      } else {
+        await playEvents(seats.you, [ev], 0, g, opts);
+      }
+    }
+  }
+
+  /** The visitor's (or presenter's) hand: same opening cards on all three seats, the agents'
+   * chips face down, then the visitor plays the hand out up to the dealer's turn. Only the
+   * first decision is graded. The dealer's turn waits for the reveal sequence. */
   async function playDeal(s, g, index, total) {
+    state.phase = "deal";
     await clearTable(g);
     hideCtas();
     if (state.presenter) setPips(null, null, "Presenter · hand " + (index + 1));
@@ -372,21 +457,96 @@
       seats[k].el.classList.add("dim");
     });
     var round = BJ.newRound(s.shoe, DATA.rule_set);
-    var shown = await playEvents(seats.you, round.events, 0, g);
+    await dealOpening(round, ["you", "baseline", "full"], g, { speed: 0.8 });
     showSituation(s);
-    if (round.done) {       // a natural (scenario deals never are, but the engine allows it)
-      showOutcome(seats.you, round);
-      return { s: s, action: null, payout: round.payout };
-    }
+    var shown = await playEvents(seats.you, round.events, 4, g, { stopAtDealer: true });
     var first = null;
     while (!round.done) {
       var act = await waitChip(BJ.legal(round), g);
       if (first === null) { first = act; placeChip(seats.you, act); }
       BJ.act(round, act);
-      shown = await playEvents(seats.you, round.events, shown, g);
+      shown = await playEvents(seats.you, round.events, shown, g, { stopAtDealer: true });
     }
-    showOutcome(seats.you, round);
-    return { s: s, action: first, payout: round.payout };
+    return { s: s, action: first, payout: round.payout, round: round, shown: shown };
+  }
+
+  function hasLive(round) { return round.hands.some(function (h) { return BJ.handTotal(h.cards).total <= 21; }); }
+  function dealerNote(round) { return round.dealerTotal > 21 ? "dealer bust" : "vs dealer " + round.dealerTotal; }
+
+  /** The reveal, in place and with no taps: both agent chips flip, the basic strategy seal
+   * stamps in, ✓/✗ on every seat, the agents play their recorded hands out side by side,
+   * then the dealer resolves and the outcome badges land. About 6 s; a tap speeds it up.
+   * `you` is the visitor's playDeal result, or null in attract mode. */
+  async function revealSequence(s, you, g) {
+    state.revealing = true; ff.on = false;
+    var note = $("#tapnote");
+    note.textContent = "tap to speed up"; note.classList.remove("hide");
+    try {
+      var keys = ["baseline", "full"], entries = {}, rounds = {};
+      keys.forEach(function (k) {
+        entries[k] = seatEntry(s, k);
+        seats[k].el.classList.remove("dim");
+        seats[k].thinkEl.classList.remove("on");
+      });
+      // 1. Baseline's chip flips, then the Full harness's.
+      state.phase = "flip";
+      await sleep(350, g);
+      $(".sealed", seats.baseline.slotEl).classList.add("open");
+      await sleep(380, g);
+      $(".sealed", seats.full.slotEl).classList.add("open");
+      await sleep(800, g);
+
+      // 2. The basic strategy seal stamps in.
+      state.phase = "seal";
+      $("#sealAct").textContent = ACT_LABEL[s.basic];
+      $("#seal").classList.add("on");
+      await sleep(650, g);
+
+      // 3. ✓ / ✗ on every seat.
+      state.phase = "marks";
+      if (you) { mark(seats.you, you.action === s.basic); await sleep(160, g); }
+      for (var n = 0; n < keys.length; n++) {
+        if (entries[keys[n]]) mark(seats[keys[n]], !!entries[keys[n]].correct);
+        await sleep(160, g);
+      }
+      await sleep(500, g);
+
+      // 4. Both agents play their recorded hands out, side by side.
+      state.phase = "playout";
+      await Promise.all(keys.map(function (k, i) {
+        var e = entries[k];
+        if (!e) return null;
+        rounds[k] = BJ.replay(s.shoe, e.decisions.map(function (d) { return d.action; }), DATA.rule_set);
+        return sleep(260 * i, g).then(function () {
+          return playEvents(seats[k], rounds[k].events, 4, g, { speed: 0.8, stopAtDealer: true });
+        }).then(function () { setActive(seats[k], -1); });
+      }));
+      await sleep(250, g);
+
+      // 5. The dealer plays out once on the table, then every seat's outcome lands.
+      state.phase = "dealer";
+      var all = [];
+      if (you) all.push(["you", you.round]);
+      keys.forEach(function (k) { if (rounds[k]) all.push([k, rounds[k]]); });
+      var center = all.filter(function (x) { return hasLive(x[1]); })[0] || all[0];
+      if (center) {
+        var evs = center[1].events, from = 0;
+        while (from < evs.length && evs[from].type !== "reveal") from++;
+        await playEvents(seats[center[0]], evs, from, g);
+        var table = BJ.summary(center[1]).dealer_cards.join(",");
+        for (var j = 0; j < all.length; j++) {
+          var key = all[j][0], r = all[j][1];
+          var other = BJ.summary(r).dealer_cards.join(",") !== table && hasLive(r);
+          showOutcome(seats[key], r, other ? dealerNote(r) : null);
+          await sleep(140, g);
+        }
+      }
+      await sleep(300, g);
+    } finally {
+      state.revealing = false; ff.on = false;
+      note.classList.add("hide");
+      if (g === gen) state.phase = "hold";
+    }
   }
 
   function pickDeals(n) {
@@ -396,6 +556,8 @@
     while (out.length < n && pool.length) out.push(pool.splice(Math.floor(Math.random() * pool.length), 1)[0]);
     return out;
   }
+
+  var HOLD_MS = 4000;   // after the reveal, the next hand starts on its own
 
   async function startGame() {
     if (!READY.length) return showEmpty();
@@ -408,119 +570,21 @@
     try {
       for (var k = 0; k < deals.length; k++) {
         var hand = await playDeal(deals[k], g, k, deals.length);
+        await revealSequence(hand.s, hand, g);
         state.game.push(hand);
         setPips(k + 1, deals.length);
-        await waitAdvance(k + 1 < deals.length ? "Next hand" : "See how you did", g);
+        await waitAdvance(k + 1 < deals.length ? "Next hand" : "See the score", g, { countdown: HOLD_MS, noTap: true });
       }
       postResults(state.game);
-      await runReveal(state.game, g);
+      await runSummary(state.game, g);
     } catch (e) { swallow(e); }
   }
 
-  // ---------- the reveal ----------
-  function seatEntry(s, k) { var e = s.seats[k]; return e && e.status === "answered" ? e : null; }
-
-  async function revealHand(hand, g, index, total) {
-    var s = hand.s;
-    await clearTable(g);
-    setPips(index, total, "Reveal");
-    await banner("Hand " + (index + 1) + (total > 1 ? " of " + total : ""), g, 900);
-
-    // 1. Re-deal the same starting cards to all three seats, the visitor's move on its chip.
-    var start = BJ.newRound(s.shoe, DATA.rule_set);
-    var opening = start.events.filter(function (ev) { return ev.type === "deal"; }).slice(0, 4);
-    for (var k = 0; k < opening.length; k++) {
-      var ev = opening[k];
-      if (ev.to === "player") {
-        for (var j = 0; j < 3; j++) {
-          var key = ["baseline", "you", "full"][j];
-          await playEvents(seats[key], [ev], 0, g, { speed: 0.6 });
-        }
-      } else {
-        await playEvents(seats.you, [ev], 0, g, { speed: 0.7 });
-      }
-    }
-    showSituation(s);
-    placeChip(seats.you, hand.action);
-    var chips = { baseline: sealedChip(seats.baseline, s.seats.baseline), full: sealedChip(seats.full, s.seats.full) };
-    seats.baseline.thinkEl.classList.add("on"); seats.full.thinkEl.classList.add("on");
-    await waitAdvance("Flip the AI chips", g);
-
-    // 2. Baseline flips, then the Full harness.
-    seats.baseline.thinkEl.classList.remove("on");
-    chips.baseline.classList.add("open");
-    await sleep(900, g);
-    seats.full.thinkEl.classList.remove("on");
-    chips.full.classList.add("open");
-    await sleep(900, g);
-    await waitAdvance("Show basic strategy", g);
-
-    // 3. The basic strategy seal stamps in.
-    $("#sealAct").textContent = ACT_LABEL[s.basic];
-    $("#seal").classList.add("on");
-    await sleep(700, g);
-    await waitAdvance("Score it", g);
-
-    // 4. ✓ / ✗ on each seat.
-    mark(seats.you, hand.action === s.basic);
-    await sleep(380, g);
-    ["baseline", "full"].forEach(function (k2, n) {
-      var e = seatEntry(s, k2);
-      setTimeout(function () { if (e) mark(seats[k2], !!e.correct); }, 380 * n);
-    });
-    await sleep(900, g);
-    await waitAdvance("Play it out", g);
-
-    // 5. Each agent seat's hand plays out card by card against its own dealer draws.
-    $("#seal").classList.remove("on");
-    for (var n = 0; n < 2; n++) {
-      var seatKey = ["baseline", "full"][n], entry = seatEntry(s, seatKey);
-      if (!entry) continue;
-      var round = BJ.replay(s.shoe, entry.decisions.map(function (d) { return d.action; }), DATA.rule_set);
-      resetDealerTo(start);
-      $("#dealerFor").textContent = "· vs " + SEAT_NAME[seatKey];
-      seats[seatKey].el.classList.remove("dim");
-      var other = seats[seatKey === "baseline" ? "full" : "baseline"];
-      other.el.classList.add("dim"); seats.you.el.classList.add("dim");
-      // skip the four opening deals, already on the table
-      var evs = round.events, skip = 0, seen = 0;
-      while (seen < 4) { if (evs[skip].type === "deal") seen++; skip++; }
-      resetSeatHand(seats[seatKey], s);
-      await playEvents(seats[seatKey], evs, skip, g, { speed: 1.15 });
-      showOutcome(seats[seatKey], round);
-      await sleep(1300, g);
-    }
-    Object.keys(seats).forEach(function (k3) { seats[k3].el.classList.remove("dim"); });
-    $("#dealerFor").textContent = "";
-  }
-  function resetDealerTo(start) {
-    var cards = $(".cards", dealer.el);
-    cards.innerHTML = "";
-    dealer.cards = []; dealer.down = null; dealer.revealed = false;
-    start.dealer.slice(0, 2).forEach(function (c, i) {
-      var el = cardEl(c, i === 1);
-      cards.appendChild(el);
-      dealer.cards.push(c.r);
-      if (i === 1) dealer.down = el;
-    });
-    showDealerTotal();
-  }
-  function resetSeatHand(seat, s) {
-    // back to the two opening cards (a fresh view, so a split builds from scratch)
-    var opening = BJ.newRound(s.shoe, DATA.rule_set).hands[0].cards;
-    seat.handsEl.innerHTML = ""; seat.handsEl.classList.remove("split"); seat.hands = [];
-    var v = handView(seat, 0);
-    opening.forEach(function (c) { v.cardsEl.appendChild(cardEl(c, false)); v.ranks.push(c.r); });
-    showTotal(v.totEl, v.ranks);
-  }
-
-  async function runReveal(hands, g) {
-    setMode("reveal");
+  /** After the last hand: the score tally, then the results sheet. */
+  async function runSummary(hands, g) {
+    state.lastInput = Date.now();   // the reveal ran with no taps; give the results their full idle time
+    state.phase = "summary";
     $("#attract").classList.add("hide");
-    for (var k = 0; k < hands.length; k++) {
-      await revealHand(hands[k], g, k, hands.length);
-      await waitAdvance(k + 1 < hands.length ? "Next hand" : "See the score", g);
-    }
     await clearTable(g);
     setPips(null, null, "");
     await showTally(hands, g);
@@ -729,33 +793,16 @@
     setPips(null, null, "");
     fetchBoard();
     try {
-      var sp = 1.8;
       for (;;) {
         var s = READY[Math.floor(Math.random() * READY.length)];
         await clearTable(g);
         seats.you.el.classList.add("dim");
-        var start = BJ.newRound(s.shoe, DATA.rule_set);
-        var opening = start.events.filter(function (ev) { return ev.type === "deal"; }).slice(0, 4);
-        for (var k = 0; k < opening.length; k++) {
-          var ev = opening[k];
-          if (ev.to === "player") {
-            await playEvents(seats.baseline, [ev], 0, g, { speed: sp });
-            await playEvents(seats.full, [ev], 0, g, { speed: sp });
-          } else await playEvents(seats.you, [ev], 0, g, { speed: sp });
-        }
+        await dealOpening(BJ.newRound(s.shoe, DATA.rule_set), ["baseline", "full"], g, { speed: 1.2 });
         showSituation(s);
-        var chips = { baseline: sealedChip(seats.baseline, s.seats.baseline), full: sealedChip(seats.full, s.seats.full) };
-        seats.baseline.thinkEl.classList.add("on"); seats.full.thinkEl.classList.add("on");
-        await sleep(2600, g);
-        seats.baseline.thinkEl.classList.remove("on"); chips.baseline.classList.add("open");
-        await sleep(1400, g);
-        seats.full.thinkEl.classList.remove("on"); chips.full.classList.add("open");
+        ["baseline", "full"].forEach(function (k) { sealedChip(seats[k], s.seats[k]); seats[k].thinkEl.classList.add("on"); });
         await sleep(1800, g);
-        $("#sealAct").textContent = ACT_LABEL[s.basic];
-        $("#seal").classList.add("on");
-        await sleep(1400, g);
-        ["baseline", "full"].forEach(function (k2) { var e = seatEntry(s, k2); if (e) mark(seats[k2], !!e.correct); });
-        await sleep(4200, g);
+        await revealSequence(s, null, g);
+        await sleep(4500, g);
       }
     } catch (e) { swallow(e); }
   }
@@ -797,6 +844,7 @@
     leaveOverlays();
     try {
       var hand = await playDeal(s, g, state.session.length);
+      await revealSequence(s, hand, g);
       state.session.push(hand);
       updateSession();
       setCtas([
@@ -811,7 +859,7 @@
     closePanel();
     var g = newFlow();
     leaveOverlays(); hideCtas();
-    runReveal(state.session.slice(), g).catch(swallow);
+    runSummary(state.session.slice(), g).catch(swallow);
   }
   function randomReady() { return READY[Math.floor(Math.random() * READY.length)]; }
 
@@ -898,14 +946,18 @@
     if (state.mode === "attract") { e.preventDefault(); startGame(); return; }
     var keyAct = { h: "hit", s: "stand", d: "double", p: "split" }[e.key.toLowerCase()];
     if (keyAct && chipResolve) { chipResolve(keyAct); return; }
-    if ((e.key === " " || e.key === "Enter" || e.key === "ArrowRight") && advanceHook) { e.preventDefault(); advanceHook(); }
+    if (e.key === " " || e.key === "Enter" || e.key === "ArrowRight") {
+      if (state.revealing) { e.preventDefault(); fastForward(); }
+      else if (advanceHook) { e.preventDefault(); advanceHook(); }
+    }
     if (e.key === "Escape" && state.presenter) openPanel();
   });
   canvas.addEventListener("click", function (e) {
     if (e.target.closest("button, .results, .panel, input")) return;
     if (state.mode === "attract") { startGame(); return; }
     if (state.mode === "empty") return;
-    if (advanceHook) advanceHook();
+    if (state.revealing) { fastForward(); return; }
+    if (advanceHook && advanceTap) advanceHook();
   });
   window.addEventListener("hashchange", function () {
     if (location.hash !== "#presenter") return;

@@ -343,3 +343,15 @@ tr.detail.open .detail-in{grid-template-rows:1fr}
 .bigboard.stack .title{font-size:22px;letter-spacing:.08em;white-space:nowrap}
 .bigboard.stack{grid-template-columns:minmax(0,1fr)}
 .bigboard.stack .title small{white-space:normal}
+
+/* ---------- the automatic reveal ---------- */
+/* "Next hand" after a reveal starts on its own: a ring on the button runs down the hold */
+.cta.timed{display:inline-flex;align-items:center;gap:20px;padding-right:44px}
+.cta .ring{width:46px;height:46px;transform:rotate(-90deg);flex:none}
+.cta .ring circle{fill:none;stroke-width:4.5}
+.cta .ring .track{stroke:rgba(27,18,8,.2)}
+.cta .ring .prog{stroke:#1b1208;stroke-linecap:round;stroke-dasharray:100;stroke-dashoffset:0;animation:countdown var(--count,4000ms) linear forwards}
+@keyframes countdown{to{stroke-dashoffset:100}}
+/* a badge may carry a second line: the dealer this seat's own draws gave it */
+.badge{display:flex;flex-direction:column;align-items:center;gap:5px}
+.badge small{font:600 16px/1 var(--sans);letter-spacing:.04em;opacity:.85;text-transform:none}
