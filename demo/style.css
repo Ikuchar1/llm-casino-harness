@@ -370,3 +370,16 @@ tr.detail.open .detail-in{grid-template-rows:1fr}
 .seal b{font-size:34px}
 /* the presenter panel opens below the header, so the live board stays in view */
 .panel{top:92px;border-top:2px solid #6d5528;border-top-left-radius:16px}
+
+/* attract: the call takes the visitor's empty seat, between the agents, so the demo
+   reveal on both agent seats stays in view; the board below is compact enough to fit */
+.attract .call{left:960px;top:604px;width:700px;transform:translateX(-50%);padding:0;background:none;
+  -webkit-backdrop-filter:none;backdrop-filter:none;white-space:normal}
+.attract .call h1{font-size:80px;line-height:1}
+.attract .call p{margin-top:16px;font-size:34px}
+.attract .bigboard{top:846px;padding:16px 34px 14px;row-gap:12px}
+.attract .bigboard .pct{font-size:48px}
+.attract .bigboard .who{font-size:26px}
+.attract .bigboard .bar{height:16px}
+.attract .bigboard .title{font-size:26px;margin-bottom:-4px}
+.attract .bigboard .foot{font-size:19px;margin-top:-2px}
