@@ -116,7 +116,7 @@ header{position:absolute;left:0;right:0;top:0;height:84px;display:flex;align-ite
 .hand{position:relative;display:flex;flex-direction:column;align-items:center;border-radius:14px;padding:4px;transition:box-shadow .3s}
 .hand.active{box-shadow:0 0 0 3px rgba(243,217,143,.75),0 0 28px rgba(243,217,143,.35)}
 .cards{display:flex;min-height:calc(var(--cw)*1.4);min-width:calc(var(--cw)*1.6)}
-.cards .card + .card{margin-left:calc(var(--cw)*-.5)}
+.cards .card + .card{margin-left:calc(var(--cw)*var(--ov,-.5));transition:margin-left .32s cubic-bezier(.2,.8,.2,1)}
 .tot{position:absolute;left:-20px;top:-16px;z-index:4;min-width:52px;height:52px;padding:0 10px;border-radius:26px;display:grid;place-items:center;
   font:800 26px/1 var(--sans);color:#16130f;background:#f7f1e3;box-shadow:0 4px 10px rgba(0,0,0,.5);opacity:0;transform:scale(.4);transition:transform .3s cubic-bezier(.2,1.6,.4,1),opacity .2s}
 .tot.on{opacity:1;transform:scale(1)}
@@ -355,3 +355,16 @@ tr.detail.open .detail-in{grid-template-rows:1fr}
 /* a badge may carry a second line: the dealer this seat's own draws gave it */
 .badge{display:flex;flex-direction:column;align-items:center;gap:5px}
 .badge small{font:600 16px/1 var(--sans);letter-spacing:.04em;opacity:.85;text-transform:none}
+
+/* the visitor's name sits under their chip, beside the cards, so a result badge hanging
+   under a long hand never lands on it */
+.seat.you .side{display:flex;flex-direction:column;align-items:center;gap:14px}
+.seat.you .seat-body{gap:30px}
+/* split hands: smaller cards so two hands fit in each seat's room */
+.hands.split{--cw:92px;gap:22px}
+.seat.you .hands.split{--cw:100px}
+/* the seal sits below the situation line instead of on top of it */
+.seal{top:500px;width:150px;height:150px;margin:-75px 0 0 -75px}
+.seal::before{inset:10px}
+.seal small{font-size:13px}
+.seal b{font-size:34px}

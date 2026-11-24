@@ -261,6 +261,27 @@
   function seatMovers(seat) { return $$(".hand, .side", seat.el); }
   function setCount(cardsEl) { cardsEl.dataset.n = cardsEl.children.length; }
 
+  // Widest each seat's cards may get before they start to collide with a neighbour seat
+  // (canvas px): the agents' hands stack under their chip, the visitor's sit beside it.
+  var SEAT_MAX = { you: 580, baseline: 480, full: 480 };
+  /** Tighten the card overlap of a seat whose hands outgrow their room (many cards, or a
+   * split), so a long hand fans tighter instead of running into the next seat. */
+  function fitSeat(seat) {
+    var el = seat.el, box = seat.key === "you" ? $(".seat-body", el) : seat.handsEl;
+    var max = SEAT_MAX[seat.key] || 480, gaps = 0, cw = 0, margins = 0;
+    // The overlap margins may be mid-transition, so take the width without them and
+    // work out the overlap that brings the seat back inside its room.
+    $$(".cards", el).forEach(function (c) {
+      gaps += Math.max(0, c.children.length - 1);
+      if (!cw && c.firstElementChild) cw = parseFloat(getComputedStyle(c.firstElementChild).width);
+      for (var i = 1; i < c.children.length; i++) margins += parseFloat(getComputedStyle(c.children[i]).marginLeft) || 0;
+    });
+    if (!gaps || !cw) { el.style.removeProperty("--ov"); return; }
+    var bare = box.offsetWidth - margins;
+    var ov = Math.max(-0.76, Math.min(-0.5, (max - bare) / (gaps * cw)));
+    el.style.setProperty("--ov", ov.toFixed(3));
+  }
+
   /** Animate engine events [from, ...) for one seat and the dealer. With opts.stopAtDealer
    * it stops at the dealer's turn (the hole card reveal) and returns that event's index. */
   async function playEvents(seat, events, from, g, opts) {
@@ -275,6 +296,7 @@
           view = view || handView(seat, ev.hand);
           view.cardsEl.appendChild(el);
           setCount(view.cardsEl);
+          fitSeat(seat);
         }, 380 * sp);
         view.ranks.push(ev.card.r);
         await flyFrom(el, shoe, { dur: 520 * sp });
@@ -295,6 +317,7 @@
           nv = handView(seat, ev.hand + 1);
           nv.cardsEl.appendChild(moved);
           setCount(src.cardsEl); setCount(nv.cardsEl);
+          fitSeat(seat);
         }, 420 * sp);
         nv.ranks.push(src.ranks.pop());
         if (moved.animate) moved.animate([{ transform: "translateX(-60px)" }, { transform: "none" }], { duration: 380 * sp, easing: "ease-out" });
