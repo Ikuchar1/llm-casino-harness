@@ -55,14 +55,16 @@ async function startServer() {
 }
 
 // Click whatever moves the flow forward until `done()` is true.
-async function drive(page, done, { label, chip = "stand", shots = {}, tag, limit = 240000 } = {}) {
+async function drive(page, done, { label, chip = "stand", shots = {}, tag, limit = 240000, ctas = true } = {}) {
   const t0 = Date.now();
   while (!(await done())) {
     if (Date.now() - t0 > limit) throw new Error(`timed out driving ${label}`);
     const errs = problems.filter((p) => / (pageerror|console):/.test(p));
     if (errs.length) throw new Error(`page errors while driving ${label}:\n${errs.join("\n")}`);
+    // ctas: false for presenter hands, whose "Next deal" opens the panel: the reveal can end
+    // between the done() check and this one, and clicking it then would cover the CTAs
     const cta = page.locator("#ctas .cta.next");
-    if (await cta.count()) {
+    if (ctas && await cta.count()) {
       const text = (await cta.first().textContent()).trim();
       if (shots[text]) { await page.screenshot({ path: path.join(OUT, `${tag}-${shots[text]}.png`) }); delete shots[text]; }
       await cta.first().click();
@@ -226,10 +228,10 @@ async function run() {
       const matches = await page.locator("#matches button:not([disabled])").count();
       if (matches) await page.keyboard.press("Enter");
       else await page.locator("#randomBtn").click();
-      await drive(page, () => page.locator("#ctas .cta", { hasText: "See results" }).count().then(Boolean), { label: "presenter hand 1", tag, chip: "hit" });
+      await drive(page, () => page.locator("#ctas .cta", { hasText: "See results" }).count().then(Boolean), { label: "presenter hand 1", tag, chip: "hit", ctas: false });
       await page.locator("#ctas .cta", { hasText: "Random" }).click();
       await page.waitForFunction(() => !document.querySelector("#ctas .cta"));
-      await drive(page, () => page.locator("#ctas .cta", { hasText: "See results" }).count().then(Boolean), { label: "presenter hand 2", tag });
+      await drive(page, () => page.locator("#ctas .cta", { hasText: "See results" }).count().then(Boolean), { label: "presenter hand 2", tag, ctas: false });
       await page.screenshot({ path: path.join(OUT, `${tag}-9-presenter-hand.png`) });
       await page.locator("#ctas .cta", { hasText: "See results" }).click();
       await drive(page, () => page.locator("#results.on").count().then(Boolean), { label: "presenter reveal", tag });
