@@ -209,7 +209,7 @@
     var t = BJ.handTotal(ranks);
     var bj = ranks.length === 2 && t.total === 21 && !opts.noBJ;
     var loneAce = ranks.length === 1 && ranks[0] === "A";
-    totEl.textContent = bj ? "BJ" : loneAce ? "A" : String(t.total);
+    totEl.textContent = bj ? "Blackjack!" : loneAce ? "A" : String(t.total);
     totEl.classList.toggle("soft", t.soft && t.total < 21 && !bj && !loneAce);
     totEl.classList.toggle("bust", t.total > 21);
     totEl.classList.add("on");
@@ -545,6 +545,8 @@
     state.revealing = true; ff.on = false;
     var fast = false;
     var note = $("#tapnote");
+    // playDeal stops at the dealer's turn with the visitor's last split hand still outlined
+    setActive(seats.you, -1);
     note.textContent = "tap to speed up"; note.classList.remove("hide");
     try {
       var keys = ["baseline", "full"], entries = {}, rounds = {};

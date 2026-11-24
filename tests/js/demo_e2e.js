@@ -133,6 +133,29 @@ async function layoutProblems(page) {
         if (hit(ri, rj)) out.push(`${ni} overlaps ${nj}`);
       }
     }
+    // the basic strategy seal is a tilted oval (plus its 9px ring): test the real shape, not
+    // its bounding box, against the situation line and every total pill near it
+    const seal = document.querySelector("#seal.on");
+    if (seal) {
+      const k = document.querySelector("#canvas").getBoundingClientRect().width / 1920;
+      const m = new DOMMatrix(getComputedStyle(seal).transform), ang = Math.atan2(m.b, m.a), sc = Math.hypot(m.a, m.b) * k;
+      const sr = R(seal), cx = (sr.left + sr.right) / 2, cy = (sr.top + sr.bottom) / 2;
+      const A = (seal.offsetWidth / 2 + 9) * sc, B = (seal.offsetHeight / 2 + 9) * sc;
+      const inside = (x, y) => {
+        const dx = x - cx, dy = y - cy, u = dx * Math.cos(-ang) - dy * Math.sin(-ang), v = dx * Math.sin(-ang) + dy * Math.cos(-ang);
+        return (u / A) ** 2 + (v / B) ** 2 < 1;
+      };
+      const covers = (r) => {
+        const pts = [];
+        for (let x = r.left + pad; x <= r.right - pad; x += 3) pts.push([x, r.top + pad], [x, r.bottom - pad]);
+        for (let y = r.top + pad; y <= r.bottom - pad; y += 3) pts.push([r.left + pad, y], [r.right - pad, y]);
+        return pts.some(([x, y]) => inside(x, y));
+      };
+      const near = [["situation", document.querySelector(".situation")], ...[...document.querySelectorAll(".seat .tot.on, .dealer .tot.on")].map((t) => [`${t.closest(".seat, .dealer").dataset.seat || "dealer"} total`, t])];
+      for (const [n, el] of near) if (el && getComputedStyle(el).opacity !== "0" && covers(R(el))) out.push(`seal covers ${n}`);
+    }
+    // the gold outline marks the split hand being played; none is left once the hand is over
+    document.querySelectorAll(".hand.active").forEach((h) => out.push(`${h.closest(".seat").dataset.seat} hand still outlined`));
     return out;
   });
 }
@@ -237,6 +260,15 @@ async function run() {
       await wait(1500);
       if (!(await page.locator("#resBody tr.row").first().evaluate((r) => r.classList.contains("open")))) problems.push(`${tag}: first results row did not open on its own`);
       await page.screenshot({ path: path.join(OUT, `${tag}-7-results.png`) });
+      // with the first hand open, every hand's row label is still on the sheet (none scrolled
+      // or pushed below the bottom edge)
+      const hidden = await page.evaluate(() => {
+        const t = document.querySelector(".res-table").getBoundingClientRect(), sh = document.querySelector("#results").getBoundingClientRect();
+        const box = { top: Math.max(t.top, sh.top), bottom: Math.min(t.bottom, sh.bottom), left: Math.max(t.left, sh.left), right: Math.min(t.right, sh.right) };
+        return [...document.querySelectorAll("#resBody .rowlabel")].map((l, i) => [i + 1, l.getBoundingClientRect()])
+          .filter(([, r]) => r.top < box.top - 1 || r.bottom > box.bottom + 1 || r.left < box.left - 1 || r.right > box.right + 1).map(([i]) => i);
+      });
+      if (hidden.length) problems.push(`${tag}: results row label(s) ${hidden.join(", ")} are off the sheet with row 1 open`);
       const rows = await page.locator("#resBody tr.row").count();
       if (rows !== 3) problems.push(`${tag}: results table has ${rows} rows, expected 3`);
       const after = await board(port);
@@ -314,6 +346,15 @@ async function run() {
         return a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
       });
       if (covered) problems.push(`${tag}: the presenter panel covers the live board`);
+      // the presenter header (brand, badge, live board, hand count) fits on one line
+      const header = await page.evaluate(() => {
+        const R = (s) => document.querySelector(s).getBoundingClientRect(), out = [];
+        const [b, p, q, h] = [R(".brand"), R(".plaque"), R(".pips"), R("header")];
+        if (b.right > p.left || p.right > q.left) out.push("items overlap");
+        if (p.top < h.top || p.bottom > h.bottom) out.push("live board taller than the header");
+        return out;
+      });
+      if (header.length) problems.push(`${tag}: presenter header: ${header.join("; ")}`);
       await page.screenshot({ path: path.join(OUT, `${tag}-12-presenter-panel.png`) });
 
       // #presenter hash on a fresh load opens the panel straight away

@@ -6,7 +6,7 @@ The terms are defined in `CONTEXT.md` (Seat, Full harness, Visitor). The demo is
 
 1. The visitor plays 3 hands. Each hand is one first decision: two cards plus the dealer upcard, then Hit / Stand / Double / Split. Split is offered only on pairs.
 2. The baseline and the full harness answer the same 3 deals.
-3. The results screen shows one row per hand: You, Baseline, Full harness, Basic strategy, with ✓/✗ and a score line ("You 2/3 · Baseline 1/3 · Full harness 3/3"). Tapping a hand shows both agents' reasoning and the odds the full harness was given. An invalid agent reply shows as "invalid ✗", the same way the study scores it.
+3. The results screen shows one row per hand: You, Baseline, Full harness, Basic strategy, with ✓/✗ and a score line ("You 2/3 · Baseline 1/3 · Full harness 3/3"). Tapping a hand shows both agents' reasoning and the odds the full harness was given. An invalid agent reply shows as "no move ✗", the same way the study scores it.
 4. A live board shows the running average for each seat: visitors, baseline, full harness. All three are computed over the deals visitors actually played.
 
 ## Data

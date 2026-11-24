@@ -41,19 +41,19 @@ header{position:absolute;left:0;right:0;top:0;height:84px;display:flex;align-ite
 .pips em{font-style:normal}
 
 /* compact live board in the header */
-.plaque{display:flex;gap:26px;align-items:center;padding:10px 22px;border-radius:10px;
-  background:linear-gradient(#2a2010,#17110a);border:1px solid #6d5528;box-shadow:inset 0 1px 0 rgba(255,220,150,.25),0 4px 14px rgba(0,0,0,.6);font-size:20px}
-.live{color:#ff6a5a;letter-spacing:.16em;font:700 20px/1 var(--sans);white-space:nowrap}
+.plaque{display:flex;gap:20px;align-items:center;padding:10px 18px;flex:none;border-radius:10px;
+  background:linear-gradient(#2a2010,#17110a);border:1px solid #6d5528;box-shadow:inset 0 1px 0 rgba(255,220,150,.25),0 4px 14px rgba(0,0,0,.6);font-size:24px}
+.live{color:#ff6a5a;letter-spacing:.16em;font:700 24px/1 var(--sans);white-space:nowrap}
 .live::before{content:"";display:inline-block;width:11px;height:11px;border-radius:50%;background:#ff5a4a;margin-right:8px;vertical-align:-1px;animation:pulse 1.4s infinite}
 .live.off{color:#8a8070}.live.off::before{background:#8a8070;animation:none}
 @keyframes pulse{50%{opacity:.25}}
-.plaque .stat{display:flex;flex-direction:column;gap:5px;min-width:150px}
-.plaque .stat div{display:flex;justify-content:space-between;gap:12px}
+.plaque .stat{display:flex;flex-direction:column;gap:5px;min-width:140px}
+.plaque .stat div{display:flex;justify-content:space-between;gap:10px;white-space:nowrap}
 .plaque .stat i{font-style:normal;color:var(--muted)}
-.plaque .stat em{font-style:normal;font:700 22px/1 var(--sans);font-variant-numeric:tabular-nums}
+.plaque .stat em{font-style:normal;font:700 24px/1 var(--sans);font-variant-numeric:tabular-nums}
 .plaque .bar{height:7px;background:rgba(255,255,255,.1);border-radius:4px;overflow:hidden}
 .plaque .bar b{display:block;height:100%;width:0;border-radius:4px;transition:width 1.2s cubic-bezier(.2,.8,.2,1)}
-.plaque .n{color:var(--ink);font:22px/1 var(--sans);white-space:nowrap}
+.plaque .n{color:var(--ink);font:24px/1 var(--sans);white-space:nowrap}
 .plaque.zero .stat{display:none}
 .plaque.zero .n{color:var(--gold-2);font:italic 24px/1 var(--serif);letter-spacing:.04em}
 
@@ -109,10 +109,10 @@ header{position:absolute;left:0;right:0;top:0;height:84px;display:flex;align-ite
   box-shadow:0 0 0 6px rgba(80,55,15,.6), 0 0 0 9px var(--gold-2), 0 18px 40px rgba(0,0,0,.6), 0 0 60px rgba(243,217,143,.45);
   color:#2a1a06;opacity:0;transform:scale(2.6) rotate(-30deg);pointer-events:none}
 .seal::before{content:"";position:absolute;inset:12px;border-radius:50%;border:2px dashed rgba(60,40,10,.55)}
-.seal small{display:block;font:800 18px/1 var(--sans);letter-spacing:.1em;text-transform:uppercase}
-.seal b{display:block;font:800 32px/1 var(--sans);letter-spacing:.02em;text-transform:uppercase;margin:7px 0 6px}
-.seal i{display:block;font:italic 17px/1 var(--serif);letter-spacing:.02em}
-.seal.on{opacity:1;transform:scale(1) rotate(-8deg);transition:transform .45s cubic-bezier(.3,1.6,.5,1),opacity .2s}
+.seal small{display:block;font:800 26px/1 var(--sans);letter-spacing:.06em;text-transform:uppercase}
+.seal b{display:block;font:800 32px/1 var(--sans);letter-spacing:.02em;text-transform:uppercase;margin:4px 0 3px}
+.seal i{display:block;font:italic 24px/1 var(--serif);letter-spacing:.02em}
+.seal.on{opacity:1;transform:scale(1) rotate(-6deg);transition:transform .45s cubic-bezier(.3,1.6,.5,1),opacity .2s}
 
 /* ---------- seats ---------- */
 .seat{position:absolute;display:flex;flex-direction:column;align-items:center;gap:10px;transform:translateX(-50%);z-index:6;--c:var(--you)}
@@ -296,7 +296,7 @@ tr.row.open td:first-child::before{transform:rotate(90deg)}
 .minicards{display:inline-flex;gap:5px;vertical-align:middle;font:700 25px/1 var(--sans)}
 .minicards span{background:#f7f1e3;color:#16130f;border-radius:5px;padding:5px 7px}
 .minicards span.r{color:#b3151f}
-.minicards em{font-style:normal;color:var(--muted);margin:0 8px;font-size:.8em;align-self:center;font-family:var(--serif)}
+.minicards em{font-style:normal;color:var(--muted);margin:0 8px;font-size:28px;align-self:center;font-family:var(--serif)}
 .rowlabel{display:block;font-size:24px;color:var(--ink);margin-top:8px;margin-left:30px;font-variant:small-caps;letter-spacing:.08em}
 .act{font:700 27px/1 var(--sans);white-space:nowrap}
 .act.ok::after{content:" ✓";color:#3fdc9c}.act.no::after{content:" ✗";color:#ff6a6a}
@@ -308,20 +308,21 @@ tr.detail td{padding:0;border:none}
 tr.detail.open .detail-in{grid-template-rows:1fr}
 .detail-in > div{overflow:hidden}
 .dgrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:22px;padding:16px 10px 26px}
-.why{background:rgba(0,0,0,.28);border-radius:12px;padding:18px 20px;border-left:5px solid var(--c);font:24px/1.42 var(--sans);color:#ece6d6;white-space:pre-wrap;word-break:break-word}
-.why h4{font:700 22px/1.2 var(--sans);letter-spacing:.1em;text-transform:uppercase;color:color-mix(in srgb,var(--c),#fff 25%);margin-bottom:10px;white-space:normal}
-.why .flip{display:block;margin-top:12px;font-size:22px;color:var(--gold-2);white-space:normal}
-.why .first{display:block;margin-top:12px;padding-top:12px;border-top:1px solid rgba(255,255,255,.1);font-size:22px;color:#cfc7b2}
+/* each box scrolls on its own, so an open hand never pushes the other rows off the sheet */
+.why{max-height:var(--why-h,400px);overflow:auto;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:rgba(243,217,143,.45) transparent;background:rgba(0,0,0,.28);border-radius:12px;padding:18px 20px;border-left:5px solid var(--c);font:24px/1.42 var(--sans);color:#ece6d6;white-space:pre-wrap;word-break:break-word}
+.why h4{font:700 24px/1.2 var(--sans);letter-spacing:.1em;text-transform:uppercase;color:color-mix(in srgb,var(--c),#fff 25%);margin-bottom:10px;white-space:normal}
+.why .flip{display:block;margin-top:12px;font-size:24px;color:var(--gold-2);white-space:normal}
+.why .first{display:block;margin-top:12px;padding-top:12px;border-top:1px solid rgba(255,255,255,.1);font-size:24px;color:#cfc7b2}
 .odds{white-space:normal}
 .odds h4{color:var(--gold)}
 .oddsline{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px}
 .bustbig{font:800 40px/1 var(--sans);color:#ff8a7a}
-.dist{display:grid;grid-template-columns:auto 1fr auto;gap:8px 12px;align-items:center;font:22px/1 var(--sans);margin:8px 0 14px}
+.dist{display:grid;grid-template-columns:auto 1fr auto;gap:8px 12px;align-items:center;font:24px/1 var(--sans);margin:8px 0 14px}
 .dist .b{height:14px;background:rgba(255,255,255,.08);border-radius:3px;overflow:hidden}
 .dist .b i{display:block;height:100%;background:var(--full);width:0;transition:width .9s cubic-bezier(.2,.8,.2,1)}
 .dist .b i.bust{background:var(--no)}
 /* "If you stand" on its own line, then three even columns that never wrap */
-.standrow{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px 12px;font:22px/1.1 var(--sans);color:#d8d0bc;white-space:nowrap}
+.standrow{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px 12px;font:24px/1.1 var(--sans);color:#d8d0bc;white-space:nowrap}
 .standrow .h{grid-column:1/-1}
 .standrow span:not(.h){display:flex;flex-direction:column;gap:6px}
 .standrow b{font-weight:800}
@@ -377,7 +378,7 @@ tr.detail.open .detail-in{grid-template-rows:1fr}
 .attract .call{left:0;width:1920px;transform:none;top:572px;padding:26px 0 30px;
   background:linear-gradient(90deg,transparent,rgba(6,10,6,.82) 16%,rgba(6,10,6,.82) 84%,transparent);
   -webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px)}
-.bigboard.stack .title{font-size:22px;letter-spacing:.08em;white-space:nowrap}
+.bigboard.stack .title{font-size:30px;letter-spacing:.06em;white-space:normal;line-height:1.1}
 .bigboard.stack{grid-template-columns:minmax(0,1fr)}
 .bigboard.stack .title small{white-space:normal}
 
@@ -400,9 +401,10 @@ tr.detail.open .detail-in{grid-template-rows:1fr}
 /* split hands: smaller cards so two hands fit in each seat's room */
 .hands.split{--cw:92px;gap:22px}
 .seat.you .hands.split{--cw:100px}
-/* the seal sits below the situation line instead of on top of it */
-.seal{top:516px;width:176px;height:176px;margin:-88px 0 0 -88px}
-.seal::before{inset:10px}
+/* the seal sits below the situation line instead of on top of it: a wide oval, so its
+   text stays big and inside the dashed ring while it clears the visitor's split totals */
+.seal{top:508px;width:270px;height:142px;margin:-71px 0 0 -135px}
+.seal::before{inset:9px}
 /* the presenter panel opens below the header, so the live board stays in view */
 .panel{top:92px;border-top:2px solid #6d5528;border-top-left-radius:16px}
 
@@ -417,7 +419,7 @@ tr.detail.open .detail-in{grid-template-rows:1fr}
 .attract .bigboard .who{font-size:26px}
 .attract .bigboard .bar{height:16px}
 .attract .bigboard .title{font-size:26px;margin-bottom:-4px}
-.attract .bigboard .foot{font-size:22px;margin-top:-2px}
+.attract .bigboard .foot{font-size:24px;margin-top:-2px}
 
 /* ---------- booth polish ---------- */
 /* the felt print fades back while the seal or a banner is up, so it never competes with them */
@@ -427,7 +429,7 @@ tr.detail.open .detail-in{grid-template-rows:1fr}
 .cards .card.sideways{rotate:90deg;margin-left:calc(var(--cw)*-.1);margin-right:calc(var(--cw)*.2)}
 /* this seat's own dealer drew different cards from the table's: say so on a pill of its own */
 .seat > .their{position:absolute;left:50%;top:100%;margin-top:34px;transform:translateX(-50%);z-index:7;white-space:nowrap;opacity:0;transition:opacity .3s;padding:7px 16px;border-radius:999px;background:rgba(10,8,4,.82);border:2px solid var(--gold-2);color:var(--gold-2);
-  font:700 22px/1.1 var(--sans);letter-spacing:.01em;text-align:center;box-shadow:0 4px 10px rgba(0,0,0,.5)}
+  font:700 24px/1.1 var(--sans);letter-spacing:.01em;text-align:center;box-shadow:0 4px 10px rgba(0,0,0,.5)}
 .seat > .their.on{opacity:1;animation:their 1.2s ease-in-out 2}
 @keyframes their{50%{box-shadow:0 0 0 6px rgba(243,217,143,.25),0 0 22px rgba(243,217,143,.7)}}
 /* "Your move" fades in above the chips when they light up */
