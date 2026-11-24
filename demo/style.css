@@ -368,3 +368,5 @@ tr.detail.open .detail-in{grid-template-rows:1fr}
 .seal::before{inset:10px}
 .seal small{font-size:13px}
 .seal b{font-size:34px}
+/* the presenter panel opens below the header, so the live board stays in view */
+.panel{top:92px;border-top:2px solid #6d5528;border-top-left-radius:16px}
