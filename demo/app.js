@@ -221,6 +221,7 @@
     seat.hands = [];
     seat.slotEl.innerHTML = "";
     seat.slotEl.classList.remove("out");
+    if (seat.theirEl) seat.theirEl.classList.remove("on");
     if (seat.thinkEl) seat.thinkEl.classList.remove("on");
     seat.el.classList.remove("dim");
   }
@@ -236,7 +237,7 @@
     var cards = $$(".seat .card, #dealerHand .card");
     var discard = $("#discard");
     var anims = cards.map(function (c) { return flyTo(c, discard, 380); });
-    $$(".badge.on, .tot.on").forEach(function (b) { b.classList.remove("on"); });
+    $$(".badge.on, .tot.on, .seat > .their.on").forEach(function (b) { b.classList.remove("on"); });
     if (!keepSlots) Object.keys(seats).forEach(function (k) { seats[k].slotEl.classList.add("out"); });
     $("#seal").classList.remove("on");
     canvas.classList.remove("quiet");
@@ -272,7 +273,7 @@
 
   // Widest each seat's cards may get before they start to collide with a neighbour seat
   // (canvas px): the agents' hands stack under their chip, the visitor's sit beside it.
-  var SEAT_MAX = { you: 640, baseline: 500, full: 500 };
+  var SEAT_MAX = { you: 610, baseline: 460, full: 460 };
   /** Tighten the card overlap of a seat whose hands outgrow their room (many cards, or a
    * split), so a long hand fans tighter instead of running into the next seat. */
   function fitSeat(seat) {
@@ -281,9 +282,13 @@
     // The overlap margins may be mid-transition, so take the width without them and
     // work out the overlap that brings the seat back inside its room.
     $$(".cards", el).forEach(function (c) {
-      gaps += Math.max(0, c.children.length - 1);
       if (!cw && c.firstElementChild) cw = parseFloat(getComputedStyle(c.firstElementChild).width);
-      for (var i = 1; i < c.children.length; i++) margins += parseFloat(getComputedStyle(c.children[i]).marginLeft) || 0;
+      // a sideways (doubled) card keeps its own fixed spacing, so only the upright ones can tighten
+      for (var i = 1; i < c.children.length; i++) {
+        if (c.children[i].classList.contains("sideways")) continue;
+        gaps++;
+        margins += parseFloat(getComputedStyle(c.children[i]).marginLeft) || 0;
+      }
     });
     if (!gaps || !cw) { el.style.removeProperty("--ov"); return; }
     var bare = box.offsetWidth - margins;
@@ -301,14 +306,15 @@
       if (opts && opts.stopAtDealer && (ev.type === "reveal" || ev.type === "settle")) return k;
       if (ev.type === "deal" && ev.to === "player") {
         var view = seat.hands[ev.hand], el = cardEl(ev.card, false);
+        // before the glide, so fitSeat already sees the doubled card as sideways
+        var rh = opts && opts.round && opts.round.hands[ev.hand];
+        if (rh && rh.doubled && view && view.ranks.length === 2) el.classList.add("sideways");
         glide(seatMovers(seat), function () {
           view = view || handView(seat, ev.hand);
           view.cardsEl.appendChild(el);
           setCount(view.cardsEl);
           fitSeat(seat);
         }, 380 * sp);
-        var rh = opts && opts.round && opts.round.hands[ev.hand];
-        if (rh && rh.doubled && view.ranks.length === 2) el.classList.add("sideways");
         view.ranks.push(ev.card.r);
         var landed = view.ranks.length;
         await flyFrom(el, shoe, { dur: 520 * sp });
@@ -371,9 +377,16 @@
       var text = word === "win" ? (amt === 1.5 ? "Blackjack +1.5" : "Win +" + amt) : word === "loss" ? "Lose " + neg : "Push";
       if (bust) text = "Bust " + neg;
       v.badgeEl.className = "badge " + word;
-      v.badgeEl.innerHTML = "<span>" + nums(text) + "</span>" + (note && !bust ? '<small class="their">' + nums(note) + "</small>" : "");
+      v.badgeEl.innerHTML = "<span>" + nums(text) + "</span>";
       v.badgeEl.classList.add("on");
     });
+    // this seat's dealer drew different cards: one pill under the seat (unless every hand bust)
+    var live = seat.hands.some(function (v) { return BJ.handTotal(v.ranks).total <= 21; });
+    if (note && live) {
+      if (!seat.theirEl) { seat.theirEl = document.createElement("div"); seat.theirEl.className = "their"; seat.el.appendChild(seat.theirEl); }
+      seat.theirEl.innerHTML = nums(note);
+      seat.theirEl.classList.add("on");
+    }
   }
 
   // ---------- chips on the slots ----------

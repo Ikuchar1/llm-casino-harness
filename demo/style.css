@@ -33,9 +33,9 @@ header{position:absolute;left:0;right:0;top:0;height:84px;display:flex;align-ite
 .brand b{color:var(--gold-2);font-weight:600}
 .brand .pres{display:inline-block;margin-left:18px;font:700 16px/1 var(--sans);letter-spacing:.2em;color:#1b1208;background:var(--gold-2);padding:7px 12px;border-radius:6px;vertical-align:middle}
 .pips{font-size:26px;letter-spacing:.18em;font-variant:small-caps;color:var(--gold-2);white-space:nowrap;min-width:260px;text-align:right;display:flex;align-items:center;justify-content:flex-end;gap:0}
-.pips span{display:inline-block;width:20px;height:20px;border-radius:50%;border:2px solid var(--gold);margin-left:10px;vertical-align:-2px;transition:background .4s}
-.pips span.on{background:var(--gold)}
-.pips span.cur{animation:pip 1.4s ease-in-out infinite}
+.pips > span{display:inline-block;width:20px;height:20px;border-radius:50%;border:2px solid var(--gold);margin-left:10px;vertical-align:-2px;transition:background .4s}
+.pips > span.on{background:var(--gold)}
+.pips > span.cur{animation:pip 1.4s ease-in-out infinite}
 @keyframes pip{50%{box-shadow:0 0 0 6px rgba(243,217,143,.25),0 0 18px rgba(243,217,143,.7)}}
 .pips .of{margin-left:18px;letter-spacing:.1em}
 .pips em{font-style:normal}
@@ -117,7 +117,9 @@ header{position:absolute;left:0;right:0;top:0;height:84px;display:flex;align-ite
 /* ---------- seats ---------- */
 .seat{position:absolute;display:flex;flex-direction:column;align-items:center;gap:10px;transform:translateX(-50%);z-index:6;--c:var(--you)}
 .seat.baseline{left:400px;top:372px;--c:var(--base)}
-.seat.full{left:1520px;top:372px;--c:var(--full)}
+.seat.full{left:1520px;top:340px;--c:var(--full)}
+.seat.full .name{display:grid;grid-template-columns:auto auto;column-gap:12px;row-gap:6px;justify-items:start;border-radius:30px;padding:8px 26px 10px 22px}
+.seat.full .name small{grid-column:2}
 .seat.you{left:960px;top:588px;--cw:134px}
 .name{display:flex;align-items:center;gap:12px;background:rgba(0,0,0,.5);padding:8px 22px;border-radius:999px;font-variant:small-caps;letter-spacing:.16em;font-size:30px;
   box-shadow:inset 0 0 0 2px color-mix(in srgb,var(--c),transparent 40%);white-space:nowrap}
@@ -261,7 +263,7 @@ header{position:absolute;left:0;right:0;top:0;height:84px;display:flex;align-ite
 .tally .row{display:grid;grid-template-columns:repeat(3,360px);gap:40px}
 .tally .who{display:flex;flex-direction:column;align-items:center;gap:6px;transform:translateY(40px);opacity:0;transition:all .6s cubic-bezier(.2,1.2,.3,1)}
 .tally .who.on{transform:none;opacity:1}
-.tally .who span{font-variant:small-caps;letter-spacing:.16em;font-size:44px}
+.tally .who span{font-variant:small-caps;letter-spacing:.12em;font-size:44px;white-space:nowrap}
 .tally .who b{font:800 150px/1 var(--sans);font-variant-numeric:tabular-nums;border-radius:24px;padding:6px 24px;transition:text-shadow .4s,background .4s}
 .tally .who.win b{text-shadow:0 0 30px rgba(243,217,143,.85),0 0 4px #fff3c4;background:rgba(243,217,143,.12)}
 .tally .who b small{font-size:.45em;color:var(--gold-2)}
@@ -321,7 +323,8 @@ tr.detail.open .detail-in{grid-template-rows:1fr}
 /* "If you stand" on its own line, then three even columns that never wrap */
 .standrow{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px 12px;font:22px/1.1 var(--sans);color:#d8d0bc;white-space:nowrap}
 .standrow .h{grid-column:1/-1}
-.standrow b{font-weight:800;margin-left:6px}
+.standrow span:not(.h){display:flex;flex-direction:column;gap:6px}
+.standrow b{font-weight:800}
 .res-side .cta{width:100%}
 
 /* ---------- presenter panel ---------- */
@@ -423,11 +426,12 @@ tr.detail.open .detail-in{grid-template-rows:1fr}
 /* a doubled hand's third card lies sideways, the way a dealer places it */
 .cards .card.sideways{rotate:90deg;margin-left:calc(var(--cw)*-.1);margin-right:calc(var(--cw)*.2)}
 /* this seat's own dealer drew different cards from the table's: say so on a pill of its own */
-.badge .their{display:block;margin-top:2px;padding:7px 14px;border-radius:999px;background:rgba(10,8,4,.82);border:2px solid var(--gold-2);color:var(--gold-2);
-  font:700 22px/1.1 var(--sans);letter-spacing:.01em;text-transform:none;white-space:normal;max-width:260px;text-align:center;box-shadow:0 4px 10px rgba(0,0,0,.5);animation:their 1.2s ease-in-out 2}
+.seat > .their{position:absolute;left:50%;top:100%;margin-top:34px;transform:translateX(-50%);z-index:7;white-space:nowrap;opacity:0;transition:opacity .3s;padding:7px 16px;border-radius:999px;background:rgba(10,8,4,.82);border:2px solid var(--gold-2);color:var(--gold-2);
+  font:700 22px/1.1 var(--sans);letter-spacing:.01em;text-align:center;box-shadow:0 4px 10px rgba(0,0,0,.5)}
+.seat > .their.on{opacity:1;animation:their 1.2s ease-in-out 2}
 @keyframes their{50%{box-shadow:0 0 0 6px rgba(243,217,143,.25),0 0 22px rgba(243,217,143,.7)}}
 /* "Your move" fades in above the chips when they light up */
-.yourmove{position:absolute;left:960px;top:836px;transform:translate(-50%,-100%);z-index:21;text-align:center;pointer-events:none;opacity:0;transition:opacity .3s;white-space:nowrap}
+.yourmove{position:absolute;left:960px;top:890px;transform:translate(-50%,-100%);z-index:21;text-align:center;pointer-events:none;opacity:0;transition:opacity .3s;white-space:nowrap}
 .yourmove b{display:block;font-variant:small-caps;letter-spacing:.2em;font-size:40px;font-weight:400;color:var(--gold-2);text-shadow:0 2px 4px #000}
 .yourmove small{display:block;margin-top:4px;font:24px/1 var(--sans);color:var(--ink);text-shadow:0 1px 3px #000}
 .yourmove small:empty{display:none}
@@ -436,5 +440,7 @@ tr.detail.open .detail-in{grid-template-rows:1fr}
 @keyframes glow{50%{text-shadow:0 2px 4px #000,0 0 26px rgba(243,217,143,.9)}}
 #canvas[data-mode="attract"] .yourmove{display:none}
 @media (prefers-reduced-motion:reduce){
-  .yourmove.on b,.pips span.cur,.badge .their{animation:none}
+  .yourmove.on b,.pips > span.cur,.seat > .their.on{animation:none}
 }
+
+#againBtn.timed{display:flex;justify-content:center}
