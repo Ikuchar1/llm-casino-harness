@@ -52,6 +52,10 @@
     gen++;
     var old = pending; pending = [];
     old.forEach(function (p) { p.reject(ABORT); });
+    state.revealing = false;
+    if (typeof ff !== "undefined" && ff) ff.on = false;
+    var tn = document.getElementById("tapnote");
+    if (tn) tn.classList.add("hide");
     return gen;
   }
   function ck(g) { if (g !== gen) throw ABORT; }
@@ -72,7 +76,7 @@
   // ---------- fast-forward (a tap during the reveal sequence) ----------
   // The sequence keeps every step but runs them at FF_TEMPO: pending waits end now, and
   // running card/chip/seal animations finish fast.
-  var FF_TEMPO = 0.12;
+  var FF_TEMPO = 0.3;
   var ff = { on: false };
   function tempo() { return ff.on ? FF_TEMPO : 1; }
   function hurryAnimations() {
@@ -116,6 +120,7 @@
       }
     });
   }
+  var RING = '<svg class="ring" viewBox="0 0 40 40" aria-hidden="true"><circle class="track" cx="20" cy="20" r="16"/><circle class="prog" cx="20" cy="20" r="16" pathLength="100"/></svg>';
   function setCtas(list) {
     var box = $("#ctas"); box.innerHTML = "";
     list.forEach(function (b) {
@@ -125,7 +130,7 @@
       if (b.countdown) {
         el.classList.add("timed");
         el.style.setProperty("--count", b.countdown + "ms");
-        el.insertAdjacentHTML("beforeend", '<svg class="ring" viewBox="0 0 40 40" aria-hidden="true"><circle class="track" cx="20" cy="20" r="16"/><circle class="prog" cx="20" cy="20" r="16" pathLength="100"/></svg>');
+        el.insertAdjacentHTML("beforeend", RING);
       }
       el.addEventListener("click", function (e) { e.stopPropagation(); b.fn(); });
       box.appendChild(el);
@@ -149,9 +154,9 @@
     var r = card.r === "10" ? "10" : card.r, s = suitOf(card), red = s === "♥" || s === "♦";
     var court = r === "J" || r === "Q" || r === "K";
     c.innerHTML = '<div class="in"><div class="face front' + (red ? " red" : "") + '">' +
-      '<div class="cn tl">' + r + "<small>" + s + "</small></div>" +
+      '<div class="cn tl' + (r === "10" ? " ten" : "") + '">' + r + "<small>" + s + "</small></div>" +
       (court ? '<div class="court">' + r + "</div>" : '<div class="pip">' + s + "</div>") +
-      '<div class="cn br">' + r + "<small>" + s + "</small></div></div>" +
+      '<div class="cn br' + (r === "10" ? " ten" : "") + '">' + r + "<small>" + s + "</small></div></div>" +
       '<div class="face back"></div></div>';
     return c;
   }
@@ -203,8 +208,9 @@
     if (!ranks.length) { totEl.classList.remove("on"); return; }
     var t = BJ.handTotal(ranks);
     var bj = ranks.length === 2 && t.total === 21 && !opts.noBJ;
-    totEl.textContent = bj ? "BJ" : String(t.total);
-    totEl.classList.toggle("soft", t.soft && t.total < 21 && !bj);
+    var loneAce = ranks.length === 1 && ranks[0] === "A";
+    totEl.textContent = bj ? "BJ" : loneAce ? "A" : String(t.total);
+    totEl.classList.toggle("soft", t.soft && t.total < 21 && !bj && !loneAce);
     totEl.classList.toggle("bust", t.total > 21);
     totEl.classList.add("on");
   }
@@ -214,6 +220,7 @@
     seat.handsEl.classList.remove("split");
     seat.hands = [];
     seat.slotEl.innerHTML = "";
+    seat.slotEl.classList.remove("out");
     if (seat.thinkEl) seat.thinkEl.classList.remove("on");
     seat.el.classList.remove("dim");
   }
@@ -230,7 +237,9 @@
     var discard = $("#discard");
     var anims = cards.map(function (c) { return flyTo(c, discard, 380); });
     $$(".badge.on, .tot.on").forEach(function (b) { b.classList.remove("on"); });
+    if (!keepSlots) Object.keys(seats).forEach(function (k) { seats[k].slotEl.classList.add("out"); });
     $("#seal").classList.remove("on");
+    canvas.classList.remove("quiet");
     $("#situation").style.opacity = 0;
     return Promise.all(anims).then(function () {
       ck(g);
@@ -263,7 +272,7 @@
 
   // Widest each seat's cards may get before they start to collide with a neighbour seat
   // (canvas px): the agents' hands stack under their chip, the visitor's sit beside it.
-  var SEAT_MAX = { you: 580, baseline: 480, full: 480 };
+  var SEAT_MAX = { you: 640, baseline: 500, full: 500 };
   /** Tighten the card overlap of a seat whose hands outgrow their room (many cards, or a
    * split), so a long hand fans tighter instead of running into the next seat. */
   function fitSeat(seat) {
@@ -298,9 +307,13 @@
           setCount(view.cardsEl);
           fitSeat(seat);
         }, 380 * sp);
+        var rh = opts && opts.round && opts.round.hands[ev.hand];
+        if (rh && rh.doubled && view.ranks.length === 2) el.classList.add("sideways");
         view.ranks.push(ev.card.r);
+        var landed = view.ranks.length;
         await flyFrom(el, shoe, { dur: 520 * sp });
-        showTotal(view.totEl, view.ranks, { noBJ: seat.hands.length > 1 });
+        showTotal(view.totEl, view.ranks.slice(0, Math.max(landed, view.totEl.dataset.n | 0)), { noBJ: seat.hands.length > 1 });
+        view.totEl.dataset.n = Math.max(landed, view.totEl.dataset.n | 0);
         await sleep(120 * sp, g);
       } else if (ev.type === "deal") {
         var del = cardEl(ev.card, !!ev.down), dcards = $(".cards", dealer.el);
@@ -329,8 +342,9 @@
         setActive(seat, -1);
         if (dealer.down) { dealer.down.classList.remove("down"); dealer.down = null; }
         dealer.revealed = true;
+        await sleep(400 * sp, g);
         showDealerTotal();
-        await sleep(650 * sp, g);
+        await sleep(250 * sp, g);
       } else if (ev.type === "settle") {
         setActive(seat, -1);
       }
@@ -353,10 +367,11 @@
       var v = seat.hands[i];
       if (!v) return;
       var word = h.result, amt = h.payout, bust = BJ.handTotal(v.ranks).total > 21;
-      var text = word === "win" ? (amt === 1.5 ? "Blackjack +1.5" : "Win +" + amt) : word === "loss" ? "Lose " + amt : "Push";
-      if (bust) text = "Bust " + amt;
+      var neg = "\u2212" + Math.abs(amt);
+      var text = word === "win" ? (amt === 1.5 ? "Blackjack +1.5" : "Win +" + amt) : word === "loss" ? "Lose " + neg : "Push";
+      if (bust) text = "Bust " + neg;
       v.badgeEl.className = "badge " + word;
-      v.badgeEl.innerHTML = "<span>" + esc(text) + "</span>" + (note && !bust ? "<small>" + esc(note) + "</small>" : "");
+      v.badgeEl.innerHTML = "<span>" + nums(text) + "</span>" + (note && !bust ? '<small class="their">' + nums(note) + "</small>" : "");
       v.badgeEl.classList.add("on");
     });
   }
@@ -364,7 +379,7 @@
   // ---------- chips on the slots ----------
   function miniChip(action, invalid) {
     var el = document.createElement("div");
-    if (invalid || !action) { el.className = "mini-chip inv"; el.textContent = "invalid"; return el; }
+    if (invalid || !action) { el.className = "mini-chip inv"; el.innerHTML = "No<br>move"; return el; }
     el.className = "mini-chip";
     el.style.setProperty("--chip", "var(--" + action + ")");
     el.textContent = ACT_LABEL[action];
@@ -400,21 +415,32 @@
   // ---------- banner, pips, situation ----------
   async function banner(text, g, ms) {
     var b = $("#banner");
-    b.textContent = text;
-    b.classList.add("on");
-    try { await sleep(ms || 1100, g); } finally { b.classList.remove("on"); }
-    await sleep(300, g);
+    b.innerHTML = nums(text);
+    b.classList.add("on"); canvas.classList.add("quiet");
+    try { await sleep(ms || 700, g); } finally {
+      b.classList.remove("on");
+      if (!$("#seal").classList.contains("on")) canvas.classList.remove("quiet");
+    }
+    await sleep(200, g);
   }
-  function setPips(done, total, label) {
+  /** Hand dots in the header. `cur` is the hand being played (its dot pulses until it is
+   * done); the text beside the dots says which hand this is. */
+  function setPips(done, total, label, cur) {
     var p = $("#pips");
-    if (total == null) { p.innerHTML = label ? "<em>" + label + "</em>" : ""; return; }
-    var html = label ? label + " " : "Hand ";
-    for (var k = 0; k < total; k++) html += '<span class="' + (k < done ? "on" : "") + '"></span>';
+    if (total == null) { p.innerHTML = label ? "<em>" + nums(label) + "</em>" : ""; return; }
+    var html = "Hand ";
+    for (var k = 0; k < total; k++) html += '<span class="' + (k < done ? "on" : k === cur ? "cur" : "") + '"></span>';
+    var which = cur != null ? cur + 1 : done;
+    if (which > 0) html += '<em class="of">' + nums(which + " of " + total) + "</em>";
     p.innerHTML = html;
+  }
+  /** Text with every run of digits wrapped in .n, so small-caps lines keep full-size figures. */
+  function nums(t) {
+    return String(t).split(/(\d+)/).map(function (part, i) { return i % 2 ? '<span class="n">' + part + "</span>" : esc(part); }).join("");
   }
   function showSituation(s) {
     var el = $("#situation");
-    el.innerHTML = esc(s.label) + ' <small>vs dealer ' + (s.upcard === "A" ? "ace" : esc(s.upcard)) + "</small>";
+    el.innerHTML = nums(s.label) + " <small>vs dealer " + (s.upcard === "A" ? "ace" : nums(s.upcard)) + "</small>";
     el.style.opacity = 1;
   }
 
@@ -422,6 +448,7 @@
   var chipResolve = null;
   function setChips(legal) {
     $("#chips").style.display = legal ? "flex" : "none";
+    $("#yourMove").classList.toggle("on", !!legal);
     $$("#chips .chip").forEach(function (b) {
       var act = b.dataset.act;
       b.disabled = !legal || legal.indexOf(act) < 0;
@@ -450,17 +477,17 @@
 
   /** Deal the opening cards (the round's first four events) to every seat in `keys` at
    * once, a short stagger between seats, then the dealer's card. */
+  var DEAL_BEAT = 150;   // ms between cards leaving the shoe
   async function dealOpening(round, keys, g, opts) {
+    var order = [];
     for (var k = 0; k < 4; k++) {
       var ev = round.events[k];
-      if (ev.to === "player") {
-        await Promise.all(keys.map(function (key, n) {
-          return sleep(90 * n * tempo(), g).then(function () { return playEvents(seats[key], [ev], 0, g, opts); });
-        }));
-      } else {
-        await playEvents(seats.you, [ev], 0, g, opts);
-      }
+      if (ev.to === "player") keys.forEach(function (key) { order.push([seats[key], ev]); });
+      else order.push([seats.you, ev]);
     }
+    await Promise.all(order.map(function (x, i) {
+      return sleep(DEAL_BEAT * i * tempo(), g).then(function () { return playEvents(x[0], [x[1]], 0, g, opts); });
+    }));
   }
 
   /** The visitor's (or presenter's) hand: same opening cards on all three seats, the agents'
@@ -468,11 +495,11 @@
    * first decision is graded. The dealer's turn waits for the reveal sequence. */
   async function playDeal(s, g, index, total) {
     state.phase = "deal";
-    await clearTable(g);
     hideCtas();
     if (state.presenter) setPips(null, null, "Presenter · hand " + (index + 1));
-    else setPips(index, total);
-    await banner(state.presenter ? "Hand " + (index + 1) : "Hand " + (index + 1) + " of " + total, g, 900);
+    else setPips(index, total, null, index);
+    // the banner runs while the last hand's cards sweep away
+    await Promise.all([clearTable(g), banner(state.presenter ? "Hand " + (index + 1) : "Hand " + (index + 1) + " of " + total, g, 700)]);
 
     // The agents have already bet on this exact deal: their chips sit face down.
     ["baseline", "full"].forEach(function (k) {
@@ -482,19 +509,20 @@
     var round = BJ.newRound(s.shoe, DATA.rule_set);
     await dealOpening(round, ["you", "baseline", "full"], g, { speed: 0.8 });
     showSituation(s);
-    var shown = await playEvents(seats.you, round.events, 4, g, { stopAtDealer: true });
+    var shown = await playEvents(seats.you, round.events, 4, g, { stopAtDealer: true, round: round });
     var first = null;
     while (!round.done) {
+      $("#yourMoveSub").textContent = first === null && index === 0 && !state.presenter ? "We grade your first move" : "";
       var act = await waitChip(BJ.legal(round), g);
       if (first === null) { first = act; placeChip(seats.you, act); }
       BJ.act(round, act);
-      shown = await playEvents(seats.you, round.events, shown, g, { stopAtDealer: true });
+      shown = await playEvents(seats.you, round.events, shown, g, { stopAtDealer: true, round: round });
     }
     return { s: s, action: first, payout: round.payout, round: round, shown: shown };
   }
 
   function hasLive(round) { return round.hands.some(function (h) { return BJ.handTotal(h.cards).total <= 21; }); }
-  function dealerNote(round) { return round.dealerTotal > 21 ? "dealer bust" : "vs dealer " + round.dealerTotal; }
+  function dealerNote(round) { return "their dealer: " + round.dealerTotal + (round.dealerTotal > 21 ? " bust" : ""); }
 
   /** The reveal, in place and with no taps: both agent chips flip, the basic strategy seal
    * stamps in, ✓/✗ on every seat, the agents play their recorded hands out side by side,
@@ -502,6 +530,7 @@
    * `you` is the visitor's playDeal result, or null in attract mode. */
   async function revealSequence(s, you, g) {
     state.revealing = true; ff.on = false;
+    var fast = false;
     var note = $("#tapnote");
     note.textContent = "tap to speed up"; note.classList.remove("hide");
     try {
@@ -523,6 +552,7 @@
       state.phase = "seal";
       $("#sealAct").textContent = ACT_LABEL[s.basic];
       $("#seal").classList.add("on");
+      canvas.classList.add("quiet");
       await sleep(650, g);
 
       // 3. ✓ / ✗ on every seat.
@@ -541,7 +571,7 @@
         if (!e) return null;
         rounds[k] = BJ.replay(s.shoe, e.decisions.map(function (d) { return d.action; }), DATA.rule_set);
         return sleep(260 * i, g).then(function () {
-          return playEvents(seats[k], rounds[k].events, 4, g, { speed: 0.8, stopAtDealer: true });
+          return playEvents(seats[k], rounds[k].events, 4, g, { speed: 0.8, stopAtDealer: true, round: rounds[k] });
         }).then(function () { setActive(seats[k], -1); });
       }));
       await sleep(250, g);
@@ -566,10 +596,12 @@
       }
       await sleep(300, g);
     } finally {
+      fast = ff.on;
       state.revealing = false; ff.on = false;
       note.classList.add("hide");
       if (g === gen) state.phase = "hold";
     }
+    return fast;
   }
 
   function pickDeals(n) {
@@ -580,7 +612,8 @@
     return out;
   }
 
-  var HOLD_MS = 4000;   // after the reveal, the next hand starts on its own
+  var HOLD_MS = 3000;   // after the reveal, the next hand starts on its own
+  var FAST_HOLD_MS = 1200;   // ...sooner when the visitor tapped to speed the reveal up
 
   async function startGame() {
     if (!READY.length) return showEmpty();
@@ -593,10 +626,10 @@
     try {
       for (var k = 0; k < deals.length; k++) {
         var hand = await playDeal(deals[k], g, k, deals.length);
-        await revealSequence(hand.s, hand, g);
+        var fast = await revealSequence(hand.s, hand, g);
         state.game.push(hand);
-        setPips(k + 1, deals.length);
-        await waitAdvance(k + 1 < deals.length ? "Next hand" : "See the score", g, { countdown: HOLD_MS, noTap: true });
+        setPips(k + 1, deals.length, null, k);
+        await waitAdvance(k + 1 < deals.length ? "Next hand" : "See the score", g, { countdown: fast ? FAST_HOLD_MS : HOLD_MS });
       }
       postResults(state.game);
       await runSummary(state.game, g);
@@ -641,22 +674,43 @@
       var d = document.createElement("div");
       d.className = "who";
       d.innerHTML = '<span style="color:var(--' + (k === "you" ? "you" : k === "baseline" ? "base" : "full") + ')">' + SEAT_NAME[k] +
-        "</span><b>" + sc[k] + "<small>/" + sc.n + "</small></b>";
+        "</span><b><i>0</i><small>/" + sc.n + "</small></b>";
+      d.dataset.k = k;
       row.appendChild(d);
     });
     $("#verdict").textContent = verdictOf(sc);
     $("#verdict").classList.remove("on");
     $("#tally").classList.add("on");
     var whos = $$("#tallyRow .who");
-    for (var k = 0; k < whos.length; k++) { await sleep(450, g); whos[k].classList.add("on"); }
-    await sleep(600, g);
+    for (var k = 0; k < whos.length; k++) {
+      await sleep(450, g);
+      whos[k].classList.add("on");
+      countUp($("i", whos[k]), sc[whos[k].dataset.k], 700);
+    }
+    await sleep(700, g);
+    var top = Math.max(sc.you, sc.baseline, sc.full);
+    if (top > 0) whos.forEach(function (w) { if (sc[w.dataset.k] === top) w.classList.add("win"); });
+    await sleep(400, g);
     $("#verdict").classList.add("on");
-    await waitAdvance("See every hand", g);
+    await waitAdvance("See every hand", g, state.presenter ? {} : { countdown: 5000 });
     $("#tally").classList.remove("on");
   }
 
+  /** Count a number up from 0 over `ms`. */
+  function countUp(el, to, ms) {
+    var t0 = null;
+    function step(t) {
+      if (t0 === null) t0 = t;
+      var f = Math.min(1, (t - t0) / ms);
+      el.textContent = String(Math.round(to * (1 - Math.pow(1 - f, 3))));
+      if (f < 1) requestAnimationFrame(step);
+    }
+    if (!to) { el.textContent = "0"; return; }
+    requestAnimationFrame(step);
+  }
+
   function actCell(action, basic, invalid) {
-    if (invalid) return '<span class="act inv">invalid ✗</span>';
+    if (invalid) return '<span class="act inv">no move ✗</span>';
     if (!action) return '<span class="act na">—</span>';
     return '<span class="act ' + (action === basic ? "ok" : "no") + '">' + ACT_LABEL[action] + "</span>";
   }
@@ -671,28 +725,40 @@
   function reasoningBox(s, k) {
     var e = seatEntry(s, k), c = k === "baseline" ? "var(--base)" : "var(--full)";
     if (!e) return '<div class="why" style="--c:' + c + '"><h4>' + SEAT_NAME[k] + "</h4>Not run yet.</div>";
-    var html = '<div class="why" style="--c:' + c + '"><h4>' + SEAT_NAME[k] + " said</h4>" + esc(e.reasoning || "(no reply)");
-    if (e.invalid) html += '<span class="flip">No valid action in this reply (' + esc(e.invalid_reason || "invalid") + "), so the hand stood.</span>";
+    var html = '<div class="why" style="--c:' + c + '"><h4>' + SEAT_NAME[k] + " said</h4>" + esc(stripAction(e.reasoning) || "(no reply)");
+    if (e.invalid) html += '<span class="flip">' + esc(plainReason(e.invalid_reason)) + ", so the hand stood.</span>";
     var se = e.self_eval;
     if (se) {
       if (se.flipped) html += '<span class="flip">Flip: first said ' + esc(ACT_LABEL[se.first_action] || "nothing valid") + ", changed to " + esc(ACT_LABEL[se.second_action] || "nothing valid") + " on the re-check.</span>";
-      html += '<span class="first">First answer, before the re-check: ' + esc(se.first_raw || "") + "</span>";
+      html += '<span class="first">First answer, before the re-check: ' + esc(stripAction(se.first_raw)) + "</span>";
     }
     return html + "</div>";
   }
+  // the parser's invalid_reason codes (agent/parser.py), in words a visitor can read
+  var REASON = {
+    no_action: "The AI never named a move",
+    truncated_no_action: "The AI's reply was cut off before it named a move",
+    empty_action: "The AI's move line was blank",
+    unknown_word: "The AI named a move that isn't in blackjack",
+    conflicting: "The AI named more than one move",
+    illegal: "The AI picked a move that wasn't allowed here",
+  };
+  function plainReason(code) { return REASON[code] || "The AI's reply had no move we could use"; }
+  /** The reply without its closing "ACTION: x" line (the move is shown in its own column). */
+  function stripAction(t) { return String(t || "").replace(/\s*ACTION:\s*[a-z]+\s*$/i, "").trim(); }
   function oddsBox(s) {
     var e = seatEntry(s, "full");
     if (!e || !e.odds) return '<div class="why odds" style="--c:var(--gold)"><h4>The odds</h4>' + (e && e.odds_text ? esc(e.odds_text) : "Not available.") + "</div>";
     var o = e.odds, html = '<div class="why odds" style="--c:var(--gold)"><h4>The odds the Full harness saw</h4>';
     if (o.bust_if_hit != null) html += '<div class="oddsline"><span>Bust if you hit</span><span class="bustbig">' + fmtPct(o.bust_if_hit) + "</span></div>";
     if (o.dealer && o.dealer.length) {
-      html += '<div>Dealer ends on</div><div class="dist">';
+      html += "<div>Dealer ends on" + (o.dealer_no_blackjack ? " (if no blackjack)" : "") + '</div><div class="dist">';
       o.dealer.forEach(function (d) {
         html += "<span>" + esc(d[0]) + '</span><span class="b"><i class="' + (d[0] === "bust" ? "bust" : "") + '" data-w="' + d[1] + '"></i></span><span>' + fmtPct(d[1]) + "</span>";
       });
       html += "</div>";
     }
-    if (o.stand) html += '<div class="standrow">If you stand: <span>win <b>' + fmtPct(o.stand.win) + "</b></span><span>push <b>" + fmtPct(o.stand.push) + "</b></span><span>lose <b>" + fmtPct(o.stand.lose) + "</b></span></div>";
+    if (o.stand) html += '<div class="standrow"><span class="h">If you stand:</span><span>win <b>' + fmtPct(o.stand.win) + "</b></span><span>push <b>" + fmtPct(o.stand.push) + "</b></span><span>lose <b>" + fmtPct(o.stand.lose) + "</b></span></div>";
     return html + "</div>";
   }
   function fmtPct(v) { return v == null ? "—" : (Math.round(v * 10) / 10) + "%"; }
@@ -707,26 +773,54 @@
     hands.forEach(function (h) {
       var s = h.s, tr = document.createElement("tr");
       tr.className = "row";
-      tr.innerHTML = '<td><span class="minicards">' + miniCards(s.player) + "<em>vs</em>" + miniCards([s.upcard]) + '</span><span class="rowlabel">' + esc(s.label) + "</span></td>" +
+      tr.innerHTML = '<td><span class="minicards">' + miniCards(s.player) + "<em>vs</em>" + miniCards([s.upcard]) + '</span><span class="rowlabel">' + nums(s.label) + "</span></td>" +
         "<td>" + actCell(h.action, s.basic, false) + "</td><td>" + seatCell(s, "baseline") + "</td><td>" + seatCell(s, "full") +
         '</td><td class="basic">' + ACT_LABEL[s.basic] + "</td>";
       var det = document.createElement("tr");
       det.className = "detail";
       det.innerHTML = '<td colspan="5"><div class="detail-in"><div><div class="dgrid">' + reasoningBox(s, "baseline") + reasoningBox(s, "full") + oddsBox(s) + "</div></div></div></td>";
-      tr.addEventListener("click", function () {
-        var open = !tr.classList.contains("open");
+      function toggle(open) {
         tr.classList.toggle("open", open); det.classList.toggle("open", open);
         if (open) setTimeout(function () { $$(".dist i", det).forEach(function (i) { i.style.width = Math.min(100, parseFloat(i.dataset.w)) + "%"; }); }, 60);
-      });
+      }
+      tr.addEventListener("click", function () { toggle(!tr.classList.contains("open")); });
       body.appendChild(tr); body.appendChild(det);
+      if (body.children.length === 2) toggle(true);   // the first hand opens on its own
     });
     $("#againBtn").textContent = state.presenter ? "Back to presenter" : "Play again";
     renderBoard();
     $("#scrim").classList.add("on");
     $("#results").classList.add("on");
     hideCtas(); setChips(null);
+    armResultsIdle();
+  }
+
+  // Results left alone go back to attract: 15 s, then a ring on "Play again" runs the last
+  // 5 s. Any touch, key or scroll starts the 20 s over. Presenter results never time out.
+  var RES_IDLE_MS = 15000, RES_RING_MS = 5000, resIdle = [];
+  function disarmResultsIdle() {
+    resIdle.forEach(clearTimeout); resIdle = [];
+    var b = $("#againBtn"), r = $(".ring", b);
+    b.classList.remove("timed");
+    if (r) r.remove();
+  }
+  function armResultsIdle() {
+    disarmResultsIdle();
+    if (state.presenter || state.mode !== "results") return;
+    var g = gen;
+    resIdle.push(setTimeout(function () {
+      if (g !== gen || state.mode !== "results") return;
+      var b = $("#againBtn");
+      b.classList.add("timed");
+      b.style.setProperty("--count", RES_RING_MS + "ms");
+      b.insertAdjacentHTML("beforeend", RING);
+      resIdle.push(setTimeout(function () {
+        if (g === gen && state.mode === "results" && !state.presenter) startAttract();
+      }, RES_RING_MS));
+    }, RES_IDLE_MS));
   }
   function leaveOverlays() {
+    disarmResultsIdle();
     $("#results").classList.remove("on");
     $("#tally").classList.remove("on");
     $("#scrim").classList.remove("on");
@@ -783,7 +877,8 @@
       $(".bar b", st).style.width = pctWidth(b[k]);
     });
     var n = b.visitors || 0;
-    $("#plaqueN").textContent = n + (n === 1 ? " visitor" : " visitors");
+    $("#plaque").classList.toggle("zero", !n);
+    $("#plaqueN").textContent = n ? n + (n === 1 ? " visitor" : " visitors") : "Be the first to play";
     var rows = [["visitor", "Visitors", "var(--you)"], ["baseline", "Baseline", "var(--base)"], ["full", "Full harness", "var(--full)"]];
     [$("#attractBoard"), $("#resultsBoard")].forEach(function (box) {
       if (!box.firstChild) {   // build once; later renders only move the bars
@@ -792,8 +887,10 @@
           html += '<div class="col" data-who="' + row[0] + '"><div class="top"><span class="who">' + row[1] + '</span><span class="pct" style="color:' + row[2] +
             '">—</span></div><div class="bar"><b style="background:' + row[2] + '"></b></div></div>';
         });
-        box.innerHTML = html + '<div class="foot"><span class="info"></span><span>The agents played these exact hands earlier (' + esc(DATA && DATA.model || "qwen2.5:7b") + ").</span></div>";
+        box.innerHTML = html + '<div class="first">Be the first to play</div>' +
+          '<div class="foot"><span class="info"></span><span>Both AI players are the same small open AI model. They played these exact hands earlier.</span></div>';
       }
+      box.classList.toggle("zero", !n);
       rows.forEach(function (row) {
         var col = $('.col[data-who="' + row[0] + '"]', box);
         $(".pct", col).textContent = pctText(b[row[0]]);
@@ -855,7 +952,7 @@
   function closePanel() { $("#panel").classList.remove("on"); $("#search").blur(); }
   function updateSession() {
     var n = state.session.length;
-    $("#sessionInfo").textContent = n + (n === 1 ? " hand played" : " hands played") + " · not posted to the board";
+    $("#sessionInfo").textContent = n + (n === 1 ? " hand played" : " hands played") + " · not posted to the board" + (DATA && DATA.model ? " · " + DATA.model : "");
     $("#seeResultsBtn").disabled = !n;
     $("#seeResultsBtn").style.opacity = n ? 1 : 0.4;
   }
@@ -871,7 +968,7 @@
       state.session.push(hand);
       updateSession();
       setCtas([
-        { label: "Next deal", cls: "next", fn: function () { openPanel(); } },
+        { label: "Next deal", cls: "next", fn: function () { hideCtas(); openPanel(); } },
         { label: "Random", cls: "ghost", fn: function () { presenterPlay(randomReady()); } },
         { label: "See results", cls: "ghost", fn: presenterResults },
       ]);
@@ -955,9 +1052,13 @@
   $("#panel").addEventListener("click", function (e) { e.stopPropagation(); });
 
   // ---------- input ----------
-  function touch() { state.lastInput = Date.now(); }
+  function touch() {
+    state.lastInput = Date.now();
+    if (state.mode === "results" && resIdle.length) armResultsIdle();
+  }
   document.addEventListener("pointerdown", touch, true);
   document.addEventListener("keydown", touch, true);
+  document.addEventListener("wheel", touch, { capture: true, passive: true });
 
   document.addEventListener("keydown", function (e) {
     if (e.shiftKey && e.altKey && e.code === "KeyP") {
@@ -1014,7 +1115,6 @@
     DATA = data;
     READY = data.scenarios.filter(function (s) { return s.ready; });
     data.scenarios.forEach(function (s) { BY_ID[s.id] = s; });
-    if (data.model) $("#modelName").textContent = data.model;
     buildChart();
     fetchBoard();
     if (!READY.length) { showEmpty(); if (location.hash === "#presenter") enterPresenter(); return; }

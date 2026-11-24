@@ -41,7 +41,7 @@
     <div class="lbl">Dealer <small id="dealerFor"></small></div>
   </div>
   <div class="situation" id="situation"></div>
-  <div class="seal" id="seal"><div><small>Basic strategy</small><b id="sealAct">Hit</b></div></div>
+  <div class="seal" id="seal"><div><small>Best move</small><b id="sealAct">Hit</b><i>basic strategy</i></div></div>
 
   <div class="seat baseline" data-seat="baseline">
     <div class="name"><b>Baseline</b><small>AI</small></div>
@@ -61,7 +61,7 @@
     </div>
   </div>
   <div class="seat full" data-seat="full">
-    <div class="name"><b>Full harness</b><small>AI + tools</small></div>
+    <div class="name"><b>Full harness</b><small>AI + odds, tips, double-check</small></div>
     <div class="think"><i></i><i></i><i></i></div>
     <div class="seat-body">
       <div class="slot"></div>
@@ -78,8 +78,9 @@
     </div>
     <div id="ctas" style="display:flex;gap:30px;align-items:center"></div>
   </div>
+  <div class="yourmove" id="yourMove"><b>Your move</b><small id="yourMoveSub">We grade your first move</small></div>
   <div class="tapnote hide" id="tapnote">or tap anywhere</div>
-  <div class="note">The agents played these exact hands earlier (<span id="modelName">qwen2.5:7b</span>).</div>
+  <div class="note">Both AI players are the same small open AI model. They played these exact hands earlier.</div>
 
   <div class="banner" id="banner"></div>
 

@@ -6,10 +6,12 @@
 // real demo/visitor_results.jsonl is never touched), then at each window size:
 //   attract screen -> tap -> play 3 hands, each followed by the automatic in-place reveal
 //   and the timed "Next hand" (never clicked: the test checks both run with no taps, and
-//   taps once mid-reveal to check fast-forward) -> tally -> results (expand a row) ->
+//   taps once mid-reveal to check fast-forward) -> tally (5 s countdown) -> results (first
+//   row opens on its own; at the first size, left idle it returns to attract) ->
 //   presenter mode (Shift+Alt+P), search a deal, play it, a random one, See results ->
 //   results -> forced deals from the presenter chart (a 9-card hand, split hands, agent
-//   splits, a long dealer hand) with a geometry check that nothing overlaps.
+//   splits, a long dealer hand, a pair of 10s, a soft hand, a double, an AI reply with no
+//   move) with a geometry check that nothing overlaps. Also an attract screen with an empty board.
 // Fails on any page error or console error, if the board did not count exactly the
 // one visitor game, if a presenter hand was posted, if a reveal needed a tap, or if any
 // badge, name label, seat or control overlaps another. Screenshots go to --out.
@@ -172,6 +174,17 @@ async function run() {
       page.on("console", (m) => { if (m.type() === "error") problems.push(`${tag} console: ${m.text()}`); });
       const before = (await board(port)).visitors;
 
+      // attract with nobody on the board yet: "Be the first to play"
+      const blank = await browser.newPage({ viewport: { width: w, height: h } });
+      blank.on("pageerror", (e) => problems.push(`${tag} (empty board) pageerror: ${e.message}`));
+      await blank.route("**/api/board", (r) => r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ visitors: 0, visitor: null, baseline: null, full: null }) }));
+      await blank.goto(`http://127.0.0.1:${port}/`);
+      await blank.waitForSelector("#attract:not(.hide)");
+      await wait(2500);
+      await blank.screenshot({ path: path.join(OUT, `${tag}-0-attract-empty.png`) });
+      if (!(await blank.locator("#attractBoard.zero .first").isVisible())) problems.push(`${tag}: empty board does not say "Be the first to play"`);
+      await blank.close();
+
       await page.goto(`http://127.0.0.1:${port}/`);
       await page.waitForSelector("#attract:not(.hide)");
       await wait(3500);
@@ -182,11 +195,15 @@ async function run() {
       // advances on its own. Nothing here clicks the Next button. Hand 2 is tapped once
       // mid-reveal (fast-forward); hands 1 and 3 run untouched.
       await page.mouse.click(w / 2, h / 2);
-      const times = [];
+      const times = [], decisions = [];
       for (let k = 0; k < 3; k++) {
         const shots = k === 0
           ? { chips: "2-play", flip: "3a-reveal-flip", seal: "3b-reveal-seal", marks: "3c-reveal-marks", playout: "3d-reveal-playout", dealer: "3e-reveal-dealer" }
           : {};
+        // time from the hand starting to the chips lighting up (no decision on a dealt blackjack)
+        const d0 = Date.now();
+        await page.waitForFunction(() => document.querySelector("#yourMove.on") || window.__demo.state.revealing, null, { timeout: 15000 });
+        if (await page.locator("#yourMove.on").count()) decisions.push(Date.now() - d0);
         const ms = await playAndReveal(page, tag, { label: `hand ${k + 1}`, shots, ffAt: k === 1 ? "seal" : null });
         const held = Date.now();
         times.push(ms);
@@ -200,17 +217,25 @@ async function run() {
         // the hold advances on its own
         if (k < 2) await page.waitForFunction(() => window.__demo.state.phase === "deal", null, { timeout: 8000 });
         else await page.waitForFunction(() => !!document.querySelector("#tally.on"), null, { timeout: 12000 });
-        if (Date.now() - held < 3500) problems.push(`${tag}: hand ${k + 1} hold was only ${Date.now() - held} ms`);
+        // 3 s hold; 1.2 s after a reveal the visitor tapped to speed up (hand 2)
+        const hold = Date.now() - held, floor = k === 1 ? 1000 : 2600;
+        if (hold < floor) problems.push(`${tag}: hand ${k + 1} hold was only ${hold} ms`);
+        if (k === 1 && hold > 2400) problems.push(`${tag}: hold after a fast-forwarded reveal was ${hold} ms, expected about 1.2 s`);
       }
-      console.log(`${tag}: reveal took ${times.map((t) => (t / 1000).toFixed(1) + " s").join(", ")} (hand 2 fast-forwarded)`);
+      console.log(`${tag}: reveal took ${times.map((t) => (t / 1000).toFixed(1) + " s").join(", ")} (hand 2 fast-forwarded); ` +
+        `deal to decision ${decisions.map((t) => (t / 1000).toFixed(1) + " s").join(", ")}`);
+      // hand 1 includes the tap on attract; later hands start at the end of the hold
+      if (decisions.slice(1).some((t) => t > 3200)) problems.push(`${tag}: deal to decision too slow: ${decisions.join(", ")} ms`);
       if (times[0] > 9000 || times[2] > 9000) problems.push(`${tag}: reveal too slow: ${times.join(", ")} ms`);
       if (times[1] >= Math.min(times[0], times[2])) problems.push(`${tag}: fast-forward did not shorten the reveal (${times.join(", ")} ms)`);
-      await wait(2500);
+      await page.waitForSelector("#ctas .cta.timed .ring", { timeout: 8000 }).catch(() => problems.push(`${tag}: tally has no countdown ring`));
       await page.screenshot({ path: path.join(OUT, `${tag}-6-tally.png`) });
-      await drive(page, () => page.locator("#results.on").count().then(Boolean), { label: "tally", tag });
-      await wait(1200);
-      await page.locator("#resBody tr.row").first().click();
-      await wait(900);
+      // the tally moves on by itself after 5 s
+      const tallyAt = Date.now();
+      await page.waitForSelector("#results.on", { timeout: 9000 }).catch(() => problems.push(`${tag}: tally did not move on by itself`));
+      if (Date.now() - tallyAt < 3500) problems.push(`${tag}: tally left after only ${Date.now() - tallyAt} ms`);
+      await wait(1500);
+      if (!(await page.locator("#resBody tr.row").first().evaluate((r) => r.classList.contains("open")))) problems.push(`${tag}: first results row did not open on its own`);
       await page.screenshot({ path: path.join(OUT, `${tag}-7-results.png`) });
       const rows = await page.locator("#resBody tr.row").count();
       if (rows !== 3) problems.push(`${tag}: results table has ${rows} rows, expected 3`);
@@ -218,6 +243,20 @@ async function run() {
       if (after.visitors !== before + 1) problems.push(`${tag}: board went ${before} -> ${after.visitors} visitors, expected +1`);
       const plaque = await page.locator("#plaqueN").textContent();
       if (!plaque.includes(String(after.visitors))) problems.push(`${tag}: plaque says "${plaque}", board has ${after.visitors}`);
+
+      // results left alone: a ring on Play again for the last 5 s, a touch restarts it, then attract
+      if (tag === `${SIZES[0][0]}x${SIZES[0][1]}`) {
+        await page.waitForSelector("#againBtn.timed .ring", { timeout: 16000 });
+        await page.screenshot({ path: path.join(OUT, `${tag}-7b-results-idle.png`) });
+        await page.mouse.click(w * 0.3, h * 0.08);
+        await wait(300);
+        if (await page.locator("#againBtn.timed").count()) problems.push(`${tag}: a touch did not restart the results timer`);
+        const idleAt = Date.now();
+        await page.waitForSelector("#attract:not(.hide)", { timeout: 24000 }).catch(() => problems.push(`${tag}: idle results never went back to attract`));
+        if (Date.now() - idleAt < 18000) problems.push(`${tag}: idle results left after only ${Date.now() - idleAt} ms`);
+        await wait(2000);
+        await page.screenshot({ path: path.join(OUT, `${tag}-7c-attract-with-data.png`) });
+      }
 
       // presenter mode
       await page.keyboard.press("Shift+Alt+KeyP");
@@ -247,6 +286,10 @@ async function run() {
         ["pair2_vs_6", ["split", "hit"], "visitor splits, hits both hands"],
         ["pair2_vs_8", ["split", "hit"], "both agents split"],
         ["hard6_vs_3", ["stand"], "dealer draws to 5 cards"],
+        ["pair10_vs_6", ["stand"], "pair of 10s; Baseline doubles (sideways card)"],
+        ["soft18_vs_9", ["stand"], "soft total"],
+        ["hard11_vs_6", ["double"], "visitor doubles (sideways card)"],
+        ["hard17_vs_2", ["stand"], "Baseline reply had no move"],
       ];
       await page.locator("#againBtn").click();
       for (const [id, chips, what] of forced) {
@@ -258,7 +301,10 @@ async function run() {
         await page.screenshot({ path: path.join(OUT, `${tag}-11-forced-${id}.png`) });
         const issues = await layoutProblems(page);
         if (issues.length) problems.push(`${tag}: forced ${id} (${what}): ${issues.join("; ")}`);
+        if (id === "hard17_vs_2" && !(await page.locator(".seat.baseline .mini-chip.inv").count())) problems.push(`${tag}: hard17_vs_2 shows no "No move" chip for Baseline`);
+        if ((id === "pair10_vs_6" || id === "hard11_vs_6") && !(await page.locator(".card.sideways").count())) problems.push(`${tag}: forced ${id} has no sideways doubled card`);
         await page.locator("#ctas .cta", { hasText: "Next deal" }).click();
+        if (await page.locator("#ctas .cta").count()) problems.push(`${tag}: presenter buttons stayed up after Next deal`);
       }
       // the presenter panel must leave the live board in the header visible
       await page.waitForSelector("#panel.on");
