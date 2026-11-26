@@ -36,8 +36,10 @@ def test_a_hand_row_has_every_field_and_round_trips_through_json():
 
 
 def test_decision_rows_log_the_state_the_menu_the_choice_and_the_fallback_and_clamp_flags():
-    # Pot raises to 6, 18, 54, 162; then the button's raises clamp to all-in and it answers badly.
-    button, big_blind = ScriptedPlayer(["raise_pot", "raise_pot", "raise_pot"]), ScriptedPlayer(["raise_pot", "raise_pot"])
+    # Pot raises to 6, 18, 54, 162; then the button's raises clamp to all-in, it answers with the
+    # hidden raise_pot (applied as the all-in), and the big blind gives an answer not on the menu.
+    button = ScriptedPlayer(["raise_pot", "raise_pot", "raise_pot"])
+    big_blind = ScriptedPlayer(["raise_pot", "raise_pot", "shove"])
     record = play_hand(seed=1, players=heads_up(button, big_blind), button="hero", hand_number=2)
     rows = json.loads(json.dumps(decision_rows(record)))
 
@@ -48,12 +50,26 @@ def test_decision_rows_log_the_state_the_menu_the_choice_and_the_fallback_and_cl
     assert first["menu"][1] == {"action": "call", "amount": 1}
     assert (first["choice"], first["action"], first["amount"], first["fallback"], first["clamped"]) == ("raise_pot", "raise_pot", 6, False, False)
 
-    bad = rows[4]
-    assert (bad["choice"], bad["action"], bad["fallback"], bad["clamped"]) == ("raise_pot", "fold", True, True)
-    assert bad["clamps"] == [
+    shove = rows[4]
+    assert (shove["choice"], shove["action"], shove["amount"], shove["fallback"], shove["clamped"]) == (
+        "raise_pot", "all_in", 200, False, True,
+    )
+    assert shove["clamps"] == [
         {"action": "raise_half_pot", "requested": 324, "actual": 200},
         {"action": "raise_pot", "requested": 486, "actual": 200},
     ]
+    bad = rows[5]
+    assert (bad["choice"], bad["action"], bad["fallback"], bad["clamped"], bad["clamps"]) == ("shove", "fold", True, False, [])
+
+
+def test_the_clamped_flag_and_count_mean_the_applied_action_was_clamped_not_just_that_the_menu_had_clamps():
+    # Facing 162 the pot raises clamp to all-in, but the button just calls.
+    button, big_blind = ScriptedPlayer(["raise_pot", "raise_pot", "call"]), ScriptedPlayer(["raise_pot", "raise_pot"])
+    record = play_hand(seed=1, players=heads_up(button, big_blind), button="hero")
+
+    call = decision_rows(record)[4]
+    assert (call["action"], call["clamped"], len(call["clamps"])) == ("call", False, 2)
+    assert hand_row(record)["num_clamped"] == 0
 
 
 def read_jsonl(path):

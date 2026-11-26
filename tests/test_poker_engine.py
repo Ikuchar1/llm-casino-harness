@@ -143,6 +143,24 @@ def test_pot_raises_that_would_go_past_the_stack_clamp_to_all_in_are_dropped_and
     assert all(not decision.clamps for decision in record.decisions[:4])
 
 
+def test_answering_with_a_pot_raise_that_was_dropped_as_a_duplicate_applies_the_all_in_it_clamped_to():
+    # Facing 162, raise_pot clamps to the 200 all-in and is not shown, but the button answers it anyway.
+    _, _, record = first_states(button_choices=["raise_pot", "raise_pot", "raise_pot"], big_blind_choices=["raise_pot", "raise_pot"])
+
+    answer = record.decisions[4]
+    assert (answer.choice, answer.action, answer.amount, answer.fallback, answer.clamped) == ("raise_pot", "all_in", 200, False, True)
+    assert "raise_pot" not in [action for action, _ in menu_of(answer.state)]
+    assert record.actions[4].action == "all_in"
+
+
+def test_a_decision_counts_as_clamped_only_when_the_applied_action_was_clamped():
+    # Facing 162 the pot raises clamp, but the button just calls.
+    _, _, record = first_states(button_choices=["raise_pot", "raise_pot", "call"], big_blind_choices=["raise_pot", "raise_pot"])
+
+    answer = record.decisions[4]
+    assert answer.clamps and answer.clamped is False
+
+
 class BotSizedPlayer(ScriptedPlayer):
     """A scripted player that asks for the bot-only sizes, the way the leak bots do."""
 

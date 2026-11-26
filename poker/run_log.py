@@ -55,7 +55,7 @@ def decision_rows(record: HandRecord) -> list[dict[str, Any]]:
             "action": decision.action,
             "amount": decision.amount,
             "fallback": decision.fallback,
-            "clamped": bool(decision.clamps),
+            "clamped": decision.clamped,
             "clamps": [asdict(clamp) for clamp in decision.clamps],
         })
     return rows
@@ -75,7 +75,7 @@ def hand_row(record: HandRecord) -> dict[str, Any]:
         "chip_delta": dict(record.chip_delta),
         "num_decisions": len(record.decisions),
         "num_fallbacks": sum(decision.fallback for decision in record.decisions),
-        "num_clamped": sum(bool(decision.clamps) for decision in record.decisions),
+        "num_clamped": sum(decision.clamped for decision in record.decisions),
     }
 
 

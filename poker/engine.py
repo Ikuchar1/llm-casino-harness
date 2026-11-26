@@ -116,10 +116,11 @@ class DecisionRecord:
     player: str
     state: DecisionState  # includes the menu offered
     choice: Optional[str]  # exactly what the player returned
-    action: str  # the menu action applied: the choice, or the fallback
+    action: str  # the menu action applied: the choice, the item a dropped raise collapsed into, or the fallback
     amount: int  # chips to call, or the raise-to total; 0 for fold and check
-    fallback: bool  # the choice was not on the menu, so check (or fold) was applied
-    clamps: list[Clamp]
+    fallback: bool  # the choice was not on the menu (nor a dropped raise), so check (or fold) was applied
+    clamps: list[Clamp]  # every clamp on this menu, applied or not
+    clamped: bool = False  # the applied action was a clamped raise
 
 
 @dataclass
@@ -164,16 +165,17 @@ def play_hand(
         if state.actor_index is not None:
             seat = BUTTON if state.actor_index == _POKERKIT_INDEX[BUTTON] else BIG_BLIND_SEAT
             player = players[seat_names[seat]]
-            menu, clamps = _menu(state, bot_sizing=getattr(player, "bot_sizing", False))
+            menu, clamps, dropped = _menu(state, bot_sizing=getattr(player, "bot_sizing", False))
             snapshot = _decision_state(state, seat, hole[seat], board, history, menu)
             choice = player.decide(snapshot)
-            item = next((item for item in menu if item.action == choice), None)
+            item = next((item for item in menu if item.action == choice), None) or dropped.get(choice)
             fallback = item is None
             if fallback:
                 item = _fallback_item(menu)
+            clamped = not fallback and any(clamp.action == choice for clamp in clamps)
             decisions.append(DecisionRecord(
                 player=seat_names[seat], state=snapshot, choice=choice, action=item.action,
-                amount=item.amount, fallback=fallback, clamps=clamps,
+                amount=item.amount, fallback=fallback, clamps=clamps, clamped=clamped,
             ))
             history.append(Action(snapshot.street, seat, item.action, item.amount))
             if item.action == FOLD:
@@ -261,11 +263,13 @@ def _fallback_item(menu: list[MenuItem]) -> MenuItem:
     return by_action.get(CHECK) or by_action[FOLD]
 
 
-def _menu(state, bot_sizing: bool = False) -> tuple[list[MenuItem], list[Clamp]]:
+def _menu(state, bot_sizing: bool = False) -> tuple[list[MenuItem], list[Clamp], dict[str, MenuItem]]:
     """The legal menu right now: fold, check or call, the pot-size raises, all-in.
 
     Raise sizes are clamped to PokerKit's min/max raise-to; a raise that clamps to an
-    amount already on the menu (often the all-in) is dropped. Every clamp is returned.
+    amount already on the menu (often the all-in) is hidden from the menu, and its name
+    maps to the item it collapsed into, so answering it applies that item rather than a
+    fallback. Every clamp is returned, with that name -> item map.
     With `bot_sizing`, a 2/3-pot raise and a min raise follow, clamped the same way but
     never dropped and not recorded as clamps (those count the LLM's menu only).
     """
@@ -275,24 +279,28 @@ def _menu(state, bot_sizing: bool = False) -> tuple[list[MenuItem], list[Clamp]]
     if state.can_fold():
         menu.append(MenuItem(FOLD))
     menu.append(MenuItem(CALL, to_call) if to_call else MenuItem(CHECK))
+    dropped: dict[str, MenuItem] = {}
     if not state.can_complete_bet_or_raise_to():
-        return menu, clamps
+        return menu, clamps, dropped
 
     low = state.min_completion_betting_or_raising_to_amount
     high = state.max_completion_betting_or_raising_to_amount
     facing = max(state.bets)
-    taken = {high}
+    all_in = MenuItem(ALL_IN, high)
+    by_amount = {high: all_in}
     for action, fraction in _POT_FRACTIONS:
         requested = facing + int(fraction * (state.total_pot_amount + to_call))
         actual = min(max(requested, low), high)
         if actual != requested:
             clamps.append(Clamp(action, requested, actual))
-        if actual not in taken:
-            menu.append(MenuItem(action, actual))
-            taken.add(actual)
-    menu.append(MenuItem(ALL_IN, high))
+        if actual in by_amount:
+            dropped[action] = by_amount[actual]
+        else:
+            by_amount[actual] = MenuItem(action, actual)
+            menu.append(by_amount[actual])
+    menu.append(all_in)
     if bot_sizing:
         two_thirds = facing + int(2 / 3 * (state.total_pot_amount + to_call))
         menu.append(MenuItem(RAISE_TWO_THIRDS_POT, min(max(two_thirds, low), high)))
         menu.append(MenuItem(MIN_RAISE, low))
-    return menu, clamps
+    return menu, clamps, dropped
