@@ -166,3 +166,52 @@ def test_the_trend_compares_a_habit_in_the_first_hands_with_the_last_hands():
     assert (bluff.before.k, bluff.before.n, bluff.after.k, bluff.after.n) == (4, 4, 1, 4)
     assert bluff.difference == pytest.approx(-0.75)
     assert bluff.low < -0.75 < bluff.high
+
+
+def hand(hand_number, model_chips, seed=None, showdown=False, board=()):
+    return {"hand_number": hand_number, "seed": hand_number // 2 if seed is None else seed,
+            "chip_delta": {"model": model_chips, "bot": -model_chips}, "showdown": showdown, "board": list(board)}
+
+
+def test_bb_per_100_is_the_mean_over_seed_pairs_with_a_ci_from_the_pairs_spread():
+    # pairs (hands 0+1, 2+3, 4+5) win 2, 0 and -4 chips = 1, 0 and -2 big blinds over 2 hands each,
+    # i.e. 50, 0 and -100 bb/100. Hand 6 has no partner yet: left out and counted.
+    hands = [hand(0, 4), hand(1, -2), hand(2, 10), hand(3, -10), hand(4, -6), hand(5, 2), hand(6, 50)]
+
+    result = pm.bb_per_100(hands)
+
+    assert result.pair_bb100 == {0: 50.0, 1: 0.0, 2: -100.0}
+    assert result.incomplete_pairs == 1
+    assert result.mean.n == 3
+    assert result.mean.mean == pytest.approx(-50 / 3)
+    sd = (((50 + 50 / 3) ** 2 + (50 / 3) ** 2 + (-100 + 50 / 3) ** 2) / 2) ** 0.5
+    assert result.mean.half_width == pytest.approx(1.96 * sd / 3 ** 0.5)
+
+
+def run(name, hands, decisions=(), seeds=(11, 22, 33), bot="calling_station", setup="plain"):
+    metadata = {"run_id": name, "model": "qwen2.5:7b", "setup": setup, "bot": bot, "seeds": list(seeds),
+                "n_hands": 2 * len(seeds)}
+    return pm.Run(name=name, metadata=metadata, decisions=list(decisions), hands=list(hands))
+
+
+def test_the_paired_comparison_differences_two_runs_seed_pair_by_seed_pair():
+    # plain: pairs at 50, 0, -100 bb/100; memory: 100, 100, -50. Differences 50, 100, 50.
+    plain = run("plain", [hand(0, 4), hand(1, -2), hand(2, 10), hand(3, -10), hand(4, -6), hand(5, 2)])
+    memory = run("memory", [hand(0, 4), hand(1, 0), hand(2, 2), hand(3, 2), hand(4, -2), hand(5, 0)], setup="memory")
+
+    comparison = pm.compare_runs(plain, memory)
+
+    assert comparison.pair_differences == {0: 50.0, 1: 100.0, 2: 50.0}
+    assert comparison.difference.mean == pytest.approx(200 / 3)
+    assert comparison.difference.half_width == pytest.approx(1.96 * (2500 / 3 / 3) ** 0.5)
+    assert 50 <= comparison.bootstrap_low <= comparison.difference.mean <= comparison.bootstrap_high <= 100
+    assert comparison.bootstrap_p == 0.0  # every resampled mean is above zero
+    assert comparison.unmatched_pairs == 0
+
+
+def test_runs_dealt_different_seeds_are_refused_for_a_paired_comparison():
+    plain = run("plain", [hand(0, 4), hand(1, -2)], seeds=(11,))
+    memory = run("memory", [hand(0, 4), hand(1, -2)], seeds=(12,))
+
+    with pytest.raises(pm.PairingError, match="seed"):
+        pm.compare_runs(plain, memory)

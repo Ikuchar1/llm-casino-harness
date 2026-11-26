@@ -14,8 +14,10 @@ from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any, Callable, Optional
 
-from analysis.stats import Proportion
-from poker.engine import ALL_IN, FOLD, MIN_RAISE, RAISE_HALF_POT, RAISE_POT, RAISE_TWO_THIRDS_POT
+from analysis.loading import Run
+from analysis.paired import PairingError
+from analysis.stats import MeanCI, Proportion, mean_with_ci
+from poker.engine import ALL_IN, BIG_BLIND, FOLD, MIN_RAISE, RAISE_HALF_POT, RAISE_POT, RAISE_TWO_THIRDS_POT
 from poker.hands import equity_vs_random
 
 Row = dict[str, Any]
@@ -195,3 +197,109 @@ def habit_trends(rows: list[Row], bot: str, n_hands: int, first_hands: int = FIR
     late = [row for row in rows if row["hand_number"] >= n_hands - last]
     return {name: rate_difference(HABIT_FUNCTIONS[name](early), HABIT_FUNCTIONS[name](late))
             for name in _targets(bot)}
+
+
+# 3. bb/100 over duplicate seed pairs -------------------------------------------------
+
+HANDS_PER_PAIR = 2  # each seed is dealt twice, seats swapped (hands 2i and 2i+1)
+
+
+def pair_index(hand_number: int) -> int:
+    """The seed pair a hand belongs to (poker.runner.deal_schedule: seed i -> hands 2i, 2i+1)."""
+    return hand_number // HANDS_PER_PAIR
+
+
+def pair_bb100(hands: list[Row]) -> tuple[dict[int, float], int]:
+    """({pair: the model's bb/100 over that pair's two hands}, pairs missing a hand).
+
+    A pair's result is its two chip deltas summed, in big blinds, per hand, x 100.
+    """
+    by_pair: dict[int, list[int]] = {}
+    for row in hands:
+        by_pair.setdefault(pair_index(row["hand_number"]), []).append(row["chip_delta"][MODEL])
+    complete = {pair: deltas for pair, deltas in by_pair.items() if len(deltas) == HANDS_PER_PAIR}
+    results = {pair: sum(deltas) / BIG_BLIND / HANDS_PER_PAIR * 100 for pair, deltas in sorted(complete.items())}
+    return results, len(by_pair) - len(complete)
+
+
+@dataclass(frozen=True)
+class BbPer100:
+    """The model's bb/100: mean ± 1.96 SE over complete seed pairs."""
+
+    pair_bb100: dict[int, float]
+    incomplete_pairs: int
+    mean: MeanCI
+
+
+def bb_per_100(hands: list[Row]) -> BbPer100:
+    results, incomplete = pair_bb100(hands)
+    return BbPer100(results, incomplete, mean_with_ci(list(results.values())))
+
+
+# Paired comparison of two runs on the same seeds ------------------------------------
+
+BOOTSTRAP_RESAMPLES = 10_000
+BOOTSTRAP_SEED = 480  # fixed, so the bootstrap interval is the same every time it is run
+
+
+@dataclass(frozen=True)
+class RunComparison:
+    """Run B minus run A on the same seed pairs (e.g. memory minus plain).
+
+    pair_differences: {pair: B's bb/100 - A's bb/100} over pairs complete in both.
+    difference: their mean ± 1.96 SE. bootstrap_low/high: the paired bootstrap 95%
+    percentile interval of the mean; bootstrap_p: its two-sided p-value for "no change".
+    habits: each habit metric B - A (decisions are not paired across runs, so the
+    interval is Newcombe's for independent rates).
+    """
+
+    a: str
+    b: str
+    pair_differences: dict[int, float]
+    unmatched_pairs: int  # pairs complete in only one of the runs
+    difference: MeanCI
+    bootstrap_low: float
+    bootstrap_high: float
+    bootstrap_p: float
+    habits: dict[str, RateDifference]
+
+
+def compare_runs(a: Run, b: Run) -> RunComparison:
+    """Pair two runs seed pair by seed pair. PairingError unless both were dealt the
+    same seed list against the same bot."""
+    for key, label in (("seeds", "seed list"), ("bot", "bot")):
+        if a.metadata.get(key) != b.metadata.get(key):
+            raise PairingError(f"cannot pair {a.name} with {b.name}: the {label} differs")
+    results_a, _ = pair_bb100(a.hands)
+    results_b, _ = pair_bb100(b.hands)
+    common = sorted(set(results_a) & set(results_b))
+    differences = {pair: results_b[pair] - results_a[pair] for pair in common}
+    low, high, p_value = paired_bootstrap(list(differences.values()))
+    bot = a.metadata.get("bot", "")
+    habits_a, habits_b = habit_metrics(a.decisions, bot), habit_metrics(b.decisions, bot)
+    return RunComparison(
+        a=a.name, b=b.name,
+        pair_differences=differences,
+        unmatched_pairs=len(set(results_a) ^ set(results_b)),
+        difference=mean_with_ci(list(differences.values())),
+        bootstrap_low=low, bootstrap_high=high, bootstrap_p=p_value,
+        habits={name: rate_difference(habits_a[name].rate, habits_b[name].rate) for name in habits_a},
+    )
+
+
+def paired_bootstrap(differences: list[float], resamples: int = BOOTSTRAP_RESAMPLES,
+                     seed: int = BOOTSTRAP_SEED) -> tuple[float, float, float]:
+    """(low, high, p) for the mean of per-pair differences: resample the pairs with
+    replacement; the 2.5th and 97.5th percentiles of the resampled means are the
+    interval, and p = 2 x the smaller share of resampled means on either side of 0.
+    nan for no pairs.
+    """
+    if not differences:
+        return math.nan, math.nan, math.nan
+    rng = random.Random(seed)
+    n = len(differences)
+    means = sorted(sum(rng.choices(differences, k=n)) / n for _ in range(resamples))
+    low, high = means[int(0.025 * resamples)], means[int(0.975 * resamples) - 1]
+    below = sum(mean <= 0 for mean in means) / resamples
+    above = sum(mean >= 0 for mean in means) / resamples
+    return low, high, min(1.0, 2 * min(below, above))
