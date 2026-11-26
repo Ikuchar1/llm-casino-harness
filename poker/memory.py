@@ -1,0 +1,148 @@
+"""Poker memory (docs/poker-plan.md, "Memory" and decisions 2 and 14).
+
+The harness keeps the ground truth, an OpponentTally of the opponent's actions per
+opportunity, and the model writes the interpretation: Notes of at most 3 hypotheses,
+rewritten in full every 5 hands. The harness, not the model, checks each cited count
+against the tally and sets each hypothesis's status.
+"""
+
+import dataclasses
+from collections import Counter
+from dataclasses import dataclass
+from typing import Any
+
+from poker.engine import CALL, CHECK, FOLD, STREETS, DecisionState, HandRecord
+
+POSTFLOP_STREETS = STREETS[1:]
+FACED_BET_OUTCOMES = ("fold", "call", "raise", "continue", "no_raise")
+CHECKED_TO_OUTCOMES = ("bet", "check")
+SHOWN_HANDS = 5  # showdown cards listed in the tally text, most recent first
+
+
+@dataclass(frozen=True)
+class ShownHand:
+    """Cards the opponent showed at a showdown (never a folded hand)."""
+
+    hand_number: int
+    cards: tuple[str, ...]
+    board: tuple[str, ...]
+
+
+class OpponentTally:
+    """Counts the opponent's actions per opportunity, from the model's point of view."""
+
+    def __init__(self, model_name: str):
+        self.model_name = model_name
+        self._yes: Counter[str] = Counter()
+        self._opportunities: Counter[str] = Counter()
+        self.hands = 0
+        self.showdowns: list[ShownHand] = []
+
+    def observe(self, record: HandRecord) -> None:
+        opponent = next(name for name in record.seats.values() if name != self.model_name)
+        self.hands += 1
+        preflop = [d for d in record.decisions if d.player == opponent and d.state.street == "preflop"]
+        vpip = any(d.action not in (FOLD, CHECK) for d in preflop)
+        raised = any(d.action not in (FOLD, CHECK, CALL) for d in preflop)
+        self._count("preflop.vpip", vpip)
+        self._count("preflop.no_vpip", not vpip)
+        self._count("preflop.raise", raised)
+        self._count("preflop.no_raise", not raised)
+        if len(record.board) >= 3:  # heads-up, both players see any flop that is dealt
+            self._count("showdown.reached", record.showdown)
+        if record.showdown:  # the only hands whose opponent hole cards the model ever sees
+            self.showdowns.append(ShownHand(record.hand_number, tuple(record.hole_cards[opponent]), tuple(record.board)))
+        for decision in record.decisions:
+            if decision.player != opponent:
+                continue
+            street = decision.state.street
+            if _faced_a_bet(decision.state):
+                outcome = _outcome(decision.action)
+                for name, happened in (
+                    ("fold", outcome == FOLD),
+                    ("call", outcome == CALL),
+                    ("raise", outcome == RAISE),
+                    ("continue", outcome != FOLD),
+                    ("no_raise", outcome != RAISE),
+                ):
+                    self._count(f"faced_bet.{name}", happened)
+                    self._count(f"faced_bet.{name}.{street}", happened)
+            elif street != "preflop":
+                outcome = _outcome(decision.action)
+                for name, happened in (("bet", outcome == RAISE), ("check", outcome == CHECK)):
+                    self._count(f"checked_to.{name}", happened)
+                    self._count(f"checked_to.{name}.{street}", happened)
+
+    def _count(self, key: str, happened: bool) -> None:
+        self._opportunities[key] += 1
+        self._yes[key] += happened
+
+    def counts(self, key: str) -> tuple[int, int]:
+        """(for, against): times the outcome happened, and the other opportunities."""
+        return self._yes[key], self._opportunities[key] - self._yes[key]
+
+    def _of(self, key: str) -> str:
+        happened, against = self.counts(key)
+        return f"{key} {happened} of {happened + against}"
+
+    def render(self) -> str:
+        """Short text for the rewrite prompt. 'key X of N' means for X, against N - X."""
+        lines = [
+            f"hands dealt: {self.hands}",
+            f"put money in voluntarily preflop: {self._of('preflop.vpip')} hands, {self._of('preflop.no_vpip')}",
+            f"raised preflop: {self._of('preflop.raise')} hands, {self._of('preflop.no_raise')}",
+        ]
+        faced = self._opportunities["faced_bet.fold"]
+        fold, call, raised = (self._yes[f"faced_bet.{name}"] for name in ("fold", "call", "raise"))
+        lines.append(f"faced a bet {faced} times: folded {fold}, called {call}, raised {raised}")
+        lines.append("  " + ", ".join(self._of(f"faced_bet.{name}") for name in FACED_BET_OUTCOMES))
+        by_street = [
+            f"{street} {self._opportunities[f'faced_bet.fold.{street}']} (folded {self._yes[f'faced_bet.fold.{street}']},"
+            f" called {self._yes[f'faced_bet.call.{street}']}, raised {self._yes[f'faced_bet.raise.{street}']})"
+            for street in STREETS
+            if self._opportunities[f"faced_bet.fold.{street}"]
+        ]
+        if by_street:
+            lines.append("  by street (keys like faced_bet.fold.flop): " + "; ".join(by_street))
+        chances = self._opportunities["checked_to.bet"]
+        lines.append(
+            f"no bet to face after the flop {chances} times: bet {self._yes['checked_to.bet']},"
+            f" checked {self._yes['checked_to.check']}"
+        )
+        lines.append("  " + ", ".join(self._of(f"checked_to.{name}") for name in CHECKED_TO_OUTCOMES))
+        by_street = [
+            f"{street} {self._opportunities[f'checked_to.bet.{street}']} (bet {self._yes[f'checked_to.bet.{street}']})"
+            for street in POSTFLOP_STREETS
+            if self._opportunities[f"checked_to.bet.{street}"]
+        ]
+        if by_street:
+            lines.append("  by street (keys like checked_to.bet.flop): " + "; ".join(by_street))
+        lines.append(f"went to showdown: {self._of('showdown.reached')} hands that saw a flop")
+        if self.showdowns:
+            shown = [f"hand {s.hand_number} {' '.join(s.cards)} on {' '.join(s.board)}" for s in self.showdowns[-SHOWN_HANDS:]]
+            lines.append("showed at showdown: " + "; ".join(shown))
+        return "\n".join(lines)
+
+    def snapshot(self) -> dict[str, Any]:
+        """JSON-ready copy of every count, for MemoryEvent logs."""
+        return {
+            "hands": self.hands,
+            "counts": {key: list(self.counts(key)) for key in sorted(self._opportunities)},
+            "showdowns": [dataclasses.asdict(shown) for shown in self.showdowns],
+        }
+
+
+RAISE = "raise"  # any bet or raise size, all-in included
+
+
+def _outcome(action: str) -> str:
+    return action if action in (FOLD, CHECK, CALL) else RAISE
+
+
+def _faced_a_bet(state: DecisionState) -> bool:
+    """Chips to call, except the button's first preflop action, which faces only the blinds."""
+    if state.to_call == 0:
+        return False
+    if state.street != "preflop":
+        return True
+    return any(_outcome(action.action) == RAISE for action in state.history if action.street == "preflop")
