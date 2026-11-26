@@ -177,7 +177,19 @@ command above if the env lacks it. A filter limits what is submitted: a setup (`
 bot, or both, e.g. `hcc/submit_poker.sh memory`, `hcc/submit_poker.sh rock`,
 `hcc/submit_poker.sh memory rock`.
 
-Time limits: 8 h for `plain`, 12 h for `memory`. The Mac smoke run took ~20 s/hand (~4 decisions at
+**Full tools (opt-in).** The setups `tools` (equity and pot odds, the preflop chart, and a generic
+re-check after every answer) and `tools_memory` (the same plus memory) are never in the default
+submit; name them to run them, on the same bots and seeds:
+
+```bash
+hcc/submit_poker.sh --dry-run tools tools_memory   # 1 pull + 8 matches
+hcc/submit_poker.sh tools                          # the 4 full-tools matches
+hcc/submit_poker.sh tools_memory rock              # one match
+```
+
+Time limits: 8 h for `plain`, 12 h for `memory`, 24 h for `tools` and `tools_memory` (every
+decision makes two calls, the answer and the re-check, with a longer prompt: about twice memory's
+time). The Mac smoke run took ~20 s/hand (~4 decisions at
 ~5 s), so 1000 hands is ~5.6 h even at Mac speed; blackjack ran ~2.3 s/decision on the P100 against
 ~3.7 s on the Mac, which puts a plain match nearer 3.5 h. Memory adds a rewrite call every 5 hands
 (~200 longer calls) and a longer prompt, hence 12 h.

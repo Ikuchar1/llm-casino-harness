@@ -52,6 +52,24 @@ def test_a_filter_submits_only_the_matching_setups_and_bots():
     assert run_jobs(dry_run("rock", "memory")[1]) == [("memory", "rock")]
 
 
+def test_the_tools_setups_are_opt_in_with_a_24_hour_limit_and_never_in_the_default_submit():
+    assert all(setup in ("plain", "memory") for setup, _ in run_jobs(dry_run()[1]))
+    _, lines = dry_run("tools", "tools_memory")
+
+    assert run_jobs(lines) == [(setup, bot) for setup in ("tools", "tools_memory") for bot in BOTS]
+    assert all("--time=24:00:00" in line for line in lines if "hcc/poker_run.sbatch" in line)
+    assert run_jobs(dry_run("tools", "rock")[1]) == [("tools", "rock")]
+
+
+def test_a_match_job_accepts_the_tools_setups(tmp_path):
+    env, calls = fake_cluster(tmp_path)
+
+    result = run_sbatch_script("tools_memory", "maniac", env=env)
+
+    assert result.returncode == 0, result.stderr
+    assert "--setup tools_memory --out results/poker_runs/qwen2.5-7b/tools_memory/maniac" in calls.read_text()
+
+
 def test_an_unknown_filter_word_submits_nothing():
     result, lines = dry_run("rocks")
 

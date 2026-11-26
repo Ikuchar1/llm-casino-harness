@@ -10,14 +10,15 @@
 #SBATCH --constraint=gpu_p100
 
 # One heads-up poker match on HCC Swan: qwen2.5:7b, one setup, one bot, 500 duplicate seed
-# pairs (1000 hands) at seed 2026. hcc/submit_poker.sh submits all 8. Submit from the repo root:
+# pairs (1000 hands) at seed 2026. hcc/submit_poker.sh submits the 8 plain and memory matches,
+# and the tools ones when named. Submit from the repo root:
 #   sbatch hcc/poker_run.sbatch plain calling_station
 #   sbatch --time=12:00:00 hcc/poker_run.sbatch memory rock
 #   SETUP=memory BOT=rock sbatch hcc/poker_run.sbatch       # same, through the environment
-#   $1 (or SETUP) = harness setup: plain or memory
+#   $1 (or SETUP) = harness setup: plain, memory, tools or tools_memory (tools ones: --time=24:00:00)
 #   $2 (or BOT)   = opponent bot: calling_station, maniac, rock or control
 # Output: results/poker_runs/qwen2.5-7b/<setup>/<bot>/ (decisions.jsonl, hands.jsonl,
-# metadata.json, and memory.jsonl for the memory setup), and poker_run.<jobid>.out plus ollama_serve.<jobid>.log in the repo root.
+# metadata.json, and memory.jsonl for the memory setups), and poker_run.<jobid>.out plus ollama_serve.<jobid>.log in the repo root.
 #
 # Resuming is a feature here: scripts/run_poker.py resumes when --out already exists, even
 # halfway through a seed pair. If the job hits the time limit, resubmit the exact same command
@@ -27,9 +28,9 @@ set -eo pipefail
 
 SETUP="${1:-${SETUP:-}}"
 BOT="${2:-${BOT:-}}"
-USAGE="usage: sbatch hcc/poker_run.sbatch <plain|memory> <calling_station|maniac|rock|control> (or SETUP=... BOT=...)"
+USAGE="usage: sbatch hcc/poker_run.sbatch <plain|memory|tools|tools_memory> <calling_station|maniac|rock|control> (or SETUP=... BOT=...)"
 case "$SETUP" in
-    plain|memory) ;;
+    plain|memory|tools|tools_memory) ;;
     *) echo "ERROR: unknown setup '$SETUP'. $USAGE" >&2; exit 2 ;;
 esac
 case "$BOT" in
