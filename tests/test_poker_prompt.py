@@ -1,7 +1,9 @@
 """Tests for the poker decision prompt (poker/prompt.py)."""
 
 from poker.engine import Action, DecisionState, MenuItem
-from poker.prompt import FORMAT_INSTRUCTION, NOTES_HEADER, build_system_prompt, build_user_prompt, notes_block
+from poker.prompt import (
+    FORMAT_INSTRUCTION, NOTES_HEADER, PROMPT_VERSION, build_system_prompt, build_user_prompt, notes_block,
+)
 
 
 def flop_state():
@@ -55,20 +57,31 @@ def test_the_menu_is_numbered_and_lists_only_the_legal_actions_with_exact_chip_a
     menu = prompt[prompt.index("Legal actions:"):].splitlines()[1:]
     assert menu == [
         "1. fold - give up the hand",
-        "2. call - call 6",
-        "3. raise_half_pot - raise to 18 (half pot)",
-        "4. raise_pot - raise to 30 (pot)",
-        "5. all_in - raise to 194 (all-in)",
+        "2. call - put in 6 more chips to match",
+        "3. raise_half_pot - your total this street becomes 18 chips (half the pot)",
+        "4. raise_pot - your total this street becomes 30 chips (the size of the pot)",
+        "5. all_in - your total this street becomes 194 chips (all your chips)",
     ]
 
 
-def test_with_no_bet_to_face_after_the_flop_the_menu_offers_check_and_bets():
+def test_with_no_bet_to_face_after_the_flop_the_menu_names_each_item_first_and_offers_no_bare_bet():
     state = flop_state()
     state = DecisionState(**{**state.__dict__, "to_call": 0, "history": state.history[:2],
-                             "menu": (MenuItem("check"), MenuItem("raise_half_pot", 6), MenuItem("all_in", 194))})
+                             "menu": (MenuItem("check"), MenuItem("raise_half_pot", 6), MenuItem("raise_pot", 12),
+                                      MenuItem("all_in", 194))})
 
     menu = build_user_prompt(state).split("Legal actions:\n")[1].splitlines()
-    assert menu == ["1. check - bet nothing", "2. raise_half_pot - bet 6 (half pot)", "3. all_in - bet 194 (all-in)"]
+    assert menu == [
+        "1. check - put in no more chips",
+        "2. raise_half_pot - your total this street becomes 6 chips (half the pot)",
+        "3. raise_pot - your total this street becomes 12 chips (the size of the pot)",
+        "4. all_in - your total this street becomes 194 chips (all your chips)",
+    ]
+    assert not any(word in line.split(" - ", 1)[1].split() for line in menu for word in ("bet", "raise"))
+
+
+def test_the_prompt_version_is_poker_v3_since_the_menu_descriptions_changed():
+    assert PROMPT_VERSION == "poker-v3"
 
 
 def test_this_hands_actions_are_told_as_you_and_opponent_by_street():

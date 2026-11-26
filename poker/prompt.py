@@ -17,7 +17,10 @@ from poker.engine import (
 
 # Bump this whenever any prompt text changes; it is logged and checked on resume.
 # v2: the answer format asks for the exact menu name, says bets use the raise_* names, gives an example.
-PROMPT_VERSION = "poker-v2"
+# v3: menu descriptions start after the exact item name and offer no bare "bet" or "raise"
+#     (e.g. "raise_half_pot - your total this street becomes 6 chips (half the pot)"), the same
+#     wording whether or not a bet is owed.
+PROMPT_VERSION = "poker-v3"
 
 # The memory hook's block heading, the only one (poker.memory.render_notes_block writes the
 # lines under it). Prompts without notes never contain it.
@@ -31,7 +34,7 @@ _RANK_WORDS = {
     "9": "nine", "T": "ten", "J": "jack", "Q": "queen", "K": "king", "A": "ace",
 }
 _SUIT_WORDS = {"c": "clubs", "d": "diamonds", "h": "hearts", "s": "spades"}
-_SIZE_WORDS = {RAISE_HALF_POT: "half pot", RAISE_POT: "pot", ALL_IN: "all-in"}
+_SIZE_WORDS = {RAISE_HALF_POT: "half the pot", RAISE_POT: "the size of the pot", ALL_IN: "all your chips"}
 
 FORMAT_INSTRUCTION = (
     "First explain your reasoning in two or three sentences. Then end your reply with a final line "
@@ -131,20 +134,23 @@ def _action_words(action: Action, is_you: bool, bet_made: bool) -> str:
 
 
 def menu_lines(state: DecisionState) -> list[str]:
-    """The numbered menu, e.g. "4. raise_pot - raise to 30 (pot)". Numbers start at 1."""
-    # With nothing to face after the flop a raise is an opening bet; preflop the big blind counts as one.
-    verb = "bet" if state.to_call == 0 and state.street != "preflop" else "raise to"
-    return [f"{number}. {item.action} - {_describe(item, verb)}" for number, item in enumerate(state.menu, start=1)]
+    """The numbered menu, e.g. "4. raise_pot - your total this street becomes 30 chips (the size of the pot)".
+
+    Numbers start at 1. The item name comes first and the description has no bare
+    "bet" or "raise" a model could answer with instead of the name; the wording is the
+    same whether or not a bet is owed.
+    """
+    return [f"{number}. {item.action} - {_describe(item)}" for number, item in enumerate(state.menu, start=1)]
 
 
-def _describe(item: MenuItem, verb: str) -> str:
+def _describe(item: MenuItem) -> str:
     if item.action == FOLD:
         return "give up the hand"
     if item.action == CHECK:
-        return "bet nothing"
+        return "put in no more chips"
     if item.action == CALL:
-        return f"call {item.amount}"
-    return f"{verb} {item.amount} ({_SIZE_WORDS.get(item.action, item.action)})"
+        return f"put in {item.amount} more chips to match"
+    return f"your total this street becomes {item.amount} chips ({_SIZE_WORDS.get(item.action, item.action)})"
 
 
 def _card_words(cards) -> str:

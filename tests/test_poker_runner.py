@@ -163,6 +163,19 @@ def test_resuming_with_a_different_model_bot_seed_or_setup_is_refused_before_any
     assert len(json.loads((out / "metadata.json").read_text())["sessions"]) == 1
 
 
+def test_resuming_a_run_started_under_the_poker_v2_prompt_is_refused_because_of_the_prompt_version(tmp_path):
+    out = tmp_path / "run"
+    run(out, n_pairs=1)
+    metadata = json.loads((out / "metadata.json").read_text())
+    (out / "metadata.json").write_text(json.dumps({**metadata, "prompt_version": "poker-v2"}))
+    before = (out / "hands.jsonl").read_text()
+
+    with pytest.raises(ValueError, match="cannot resume.*prompt_version='poker-v2', not 'poker-v3'"):
+        run(out, n_pairs=2)
+    assert (out / "hands.jsonl").read_text() == before
+    assert len(json.loads((out / "metadata.json").read_text())["sessions"]) == 1
+
+
 def ollama_facts(digest, version="0.9.0"):
     return {"model_digest": digest, "ollama_version": version}
 
