@@ -4,6 +4,10 @@ Some tests pass a stacked deck so the cards are known. Deal order from the deck 
 button hole cards, big blind hole cards, burn, flop (3), burn, turn, burn, river.
 """
 
+import dataclasses
+import json
+import random
+
 from poker.cards import make_deck
 from poker.engine import play_duplicate, play_hand, play_match
 
@@ -242,3 +246,25 @@ def test_every_hand_of_a_match_has_chip_deltas_that_sum_to_zero():
 
     assert all(sum(hand.chip_delta.values()) == 0 for hand in hands)
     assert any(hand.chip_delta["hero"] != 0 for hand in hands)
+
+
+class RandomMenuPlayer:
+    """Picks a random menu item (seeded), sometimes answering with junk to force a fallback."""
+
+    def __init__(self, seed):
+        self.rng = random.Random(seed)
+
+    def decide(self, state):
+        if self.rng.random() < 0.1:
+            return "junk"
+        return self.rng.choice(state.menu).action
+
+
+def test_a_long_match_of_random_legal_choices_always_finishes_and_every_record_is_plain_json():
+    hands = play_match(seeds=list(range(150)), players=heads_up(RandomMenuPlayer(1), RandomMenuPlayer(2)))
+
+    assert len(hands) == 300
+    assert all(sum(hand.chip_delta.values()) == 0 for hand in hands)
+    assert {hand.showdown for hand in hands} == {True, False}
+    for hand in hands:
+        json.dumps(dataclasses.asdict(hand))

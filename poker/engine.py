@@ -16,7 +16,7 @@ the big blind is index 0. The button acts first preflop and last after the flop.
 from dataclasses import dataclass, field
 from typing import Optional, Protocol
 
-from pokerkit import Automation, NoLimitTexasHoldem
+from pokerkit import Automation, Folding, NoLimitTexasHoldem
 
 from poker.cards import make_deck
 
@@ -125,7 +125,8 @@ class HandRecord:
     seats: dict[str, str]  # seat ("button", "big_blind") -> player name
     hole_cards: dict[str, list[str]]  # player name -> their two cards
     board: list[str]
-    showdown: bool
+    actions: list[Action]  # every action this hand, oldest first
+    showdown: bool  # True when the hand ended with no fold
     chip_delta: dict[str, int]  # player name -> chips won (negative = lost); sums to 0
     decisions: list[DecisionRecord]
 
@@ -180,8 +181,10 @@ def play_hand(
             dealt = [next(cards) for _ in range(count)]
             state.deal_board("".join(dealt))
             board.extend(dealt)
+        else:
+            raise RuntimeError("PokerKit is waiting on an operation the engine does not perform")
 
-    showdown = not any(type(op).__name__ == "Folding" for op in state.operations)
+    showdown = not any(isinstance(op, Folding) for op in state.operations)
     return HandRecord(
         seed=seed,
         hand_number=hand_number,
@@ -189,6 +192,7 @@ def play_hand(
         seats=dict(seat_names),
         hole_cards={seat_names[seat]: hole[seat] for seat in SEATS},
         board=board,
+        actions=history,
         showdown=showdown,
         chip_delta={seat_names[seat]: int(state.payoffs[_POKERKIT_INDEX[seat]]) for seat in SEATS},
         decisions=decisions,
