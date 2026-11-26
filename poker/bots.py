@@ -12,7 +12,7 @@ from typing import Optional
 
 from poker.cards import RANKS
 from poker.engine import CALL, CHECK, FOLD, MIN_RAISE, RAISE_TWO_THIRDS_POT, DecisionState
-from poker.hands import TWO_PAIR, category, equity_vs_random
+from poker.hands import TRIPS, TWO_PAIR, category, equity_vs_random
 
 
 class _Bot:
@@ -79,15 +79,19 @@ def _is_premium(hole_cards: tuple[str, ...]) -> bool:
 
 
 def _has_top_pair_or_better(state: DecisionState) -> bool:
-    """One hole card pairs the highest board card, a pocket pair above the board, or any
-    stronger made hand (two pair or better that the hole cards improve on the board's own).
+    """One hole card pairs the highest board card, a pocket pair above the board, trips or
+    better that beats what the board alone makes, or two pair with both pairs made by the
+    hole cards. A lower pair on a paired board (JJ on A-A-5, x4 on 9-9-4) does not count.
     """
-    top = max(RANKS.index(card[0]) for card in state.board)
+    board = {RANKS.index(card[0]) for card in state.board}
+    top = max(board)
     hole = [RANKS.index(card[0]) for card in state.hole_cards]
     if top in hole or (hole[0] == hole[1] and hole[0] > top):
         return True
     made = category([*state.hole_cards, *state.board])
-    return made >= TWO_PAIR and made > category(list(state.board))
+    if made >= TRIPS:
+        return made > category(list(state.board))
+    return made == TWO_PAIR and hole[0] != hole[1] and all(rank in board for rank in hole)
 
 
 class Control(_Bot):

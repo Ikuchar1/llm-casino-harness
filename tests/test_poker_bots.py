@@ -7,6 +7,8 @@ or the raise-to total for raises.
 import random
 import time
 
+import pytest
+
 from poker.bots import BOTS, make_bot
 from poker.cards import make_deck
 from poker.engine import Action, DecisionState, MenuItem, play_match
@@ -156,6 +158,41 @@ def test_the_rock_bets_a_flush_made_with_a_hole_card():
     flush = state(hole_cards=("9h", "2h"), board=("Kh", "Jh", "4h", "Ac"), street="turn", pot=12, to_call=0)
 
     assert make_bot("rock").decide(flush) == "raise_two_thirds_pot"
+
+
+@pytest.mark.parametrize(
+    "hole_cards, board",
+    [
+        (("Jh", "Jc"), ("As", "Ad", "5c")),  # pocket pair under a paired top card
+        (("8h", "8c"), ("Ks", "Kd", "4c")),
+        (("2h", "2c"), ("3s", "3d", "4c")),
+        (("4h", "Qc"), ("9s", "9d", "4c")),  # a hole card pairs a lower board card
+    ],
+)
+def test_the_rock_folds_a_lower_pair_on_a_paired_board_to_a_flop_bet(hole_cards, board):
+    two_pair_under_the_top_card = state(hole_cards=hole_cards, board=board, street="flop", pot=20, to_call=8)
+
+    assert make_bot("rock").decide(two_pair_under_the_top_card) == "fold"
+
+
+@pytest.mark.parametrize(
+    "hole_cards, board",
+    [
+        (("Ah", "Kc"), ("As", "Ad", "5c")),  # trips
+        (("Kh", "Kc"), ("Ks", "7d", "7c")),  # full house
+        (("Ah", "5c"), ("As", "7d", "7c")),  # a hole card pairs the top card
+    ],
+)
+def test_the_rock_raises_a_flop_bet_with_top_pair_or_better_on_a_paired_board(hole_cards, board):
+    strong = state(hole_cards=hole_cards, board=board, street="flop", pot=20, to_call=8)
+
+    assert make_bot("rock").decide(strong) == "raise_two_thirds_pot"
+
+
+def test_the_rock_folds_a_pocket_pair_under_the_top_card_to_a_flop_bet():
+    underpair = state(hole_cards=("7h", "7c"), board=("As", "Kd", "2c"), street="flop", pot=20, to_call=8)
+
+    assert make_bot("rock").decide(underpair) == "fold"
 
 
 # ---------- Control ----------
