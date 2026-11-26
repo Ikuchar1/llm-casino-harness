@@ -36,6 +36,7 @@ LLM_FIELDS = {
     "mapping": "mapping",
     "done_reason": "done_reason",
     "eval_count": "eval_count",
+    "prompt_tokens": "prompt_tokens",
     "latency_s": "latency_s",
 }
 

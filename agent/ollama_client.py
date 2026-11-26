@@ -57,6 +57,7 @@ class ChatReply:
     done_reason: Optional[str]  # "stop" = finished normally, "length" = hit num_predict
     eval_count: Optional[int]  # tokens generated
     latency_s: float  # wall-clock time for the successful request
+    prompt_eval_count: Optional[int] = None  # prompt tokens Ollama evaluated (None when not reported)
 
 
 class ChatClient(Protocol):
@@ -114,6 +115,7 @@ class OllamaClient:
             done_reason=body.get("done_reason"),
             eval_count=body.get("eval_count"),
             latency_s=latency,
+            prompt_eval_count=body.get("prompt_eval_count"),
         )
 
     def _post_with_retries(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:

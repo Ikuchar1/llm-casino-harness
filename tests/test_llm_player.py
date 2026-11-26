@@ -215,6 +215,16 @@ def test_client_sends_the_locked_request():
     assert reply.latency_s >= 0
 
 
+def test_the_reply_carries_ollamas_prompt_token_count_when_it_is_given():
+    with_count = {**OK_BODY, "prompt_eval_count": 812}
+    session = FakeSession([FakeResponse(200, with_count), FakeResponse(200, OK_BODY)])
+    client = make_client(session)
+
+    assert client.chat("SYS", "USER").prompt_eval_count == 812
+    assert client.chat("SYS", "USER").prompt_eval_count is None
+    assert ChatReply(content="x", done_reason="stop", eval_count=1, latency_s=0.1).prompt_eval_count is None
+
+
 def test_chat_messages_sends_the_whole_conversation_with_the_same_locked_options():
     session = FakeSession([FakeResponse(200, OK_BODY), FakeResponse(200, OK_BODY)])
     client = make_client(session)

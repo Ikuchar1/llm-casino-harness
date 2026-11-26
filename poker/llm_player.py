@@ -41,7 +41,8 @@ class PokerDecisionDetail:
     named_action: Optional[str]  # what the reply named, even off the menu
     mapping: Optional[str]  # e.g. "check/call -> call"
     done_reason: Optional[str]
-    eval_count: Optional[int]
+    eval_count: Optional[int]  # tokens generated
+    prompt_tokens: Optional[int]  # Ollama's prompt_eval_count (None when not reported)
     latency_s: float
 
 
@@ -75,6 +76,7 @@ class PokerLLMPlayer:
             mapping=result.mapping,
             done_reason=reply.done_reason,
             eval_count=reply.eval_count,
+            prompt_tokens=reply.prompt_eval_count,
             latency_s=reply.latency_s,
         ))
         return result.action if result.action is not None else result.named
