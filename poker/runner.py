@@ -141,8 +141,8 @@ def run_match(
     """Play every deal of the match that isn't in out_dir's hands.jsonl yet, logging each hand.
 
     metadata.json is created on the first call; a later call on the same directory
-    resumes the same run (same run_id) and adds a session, which records session_metadata
-    (e.g. platform_info(): a resumed job may land on another node). A resume keeps the
+    resumes the same run (same run_id) and adds a session, which records its git_commit and
+    session_metadata (e.g. platform_info(): a resumed job may land on another node). A resume keeps the
     run's first model_digest and ollama_version (KEPT_ON_RESUME). Errors from the player (e.g.
     Ollama down) propagate after the session is marked; the interrupted hand is not
     written, so the next call replays just that deal, even halfway through a pair.
@@ -157,7 +157,7 @@ def run_match(
     metadata.update({key: value for key, value in extra_metadata.items()
                      if not (key in KEPT_ON_RESUME and key in metadata)})
     session: dict[str, Any] = {"started_at": _now_iso(), "ended_at": None, "status": "running",
-                               **(session_metadata or {})}
+                               "git_commit": metadata["git_commit"], **(session_metadata or {})}
     metadata["sessions"].append(session)
     _save(out_dir, metadata)
     identity = {key: metadata[key] for key in ("run_id", "model", "setup", "bot")}
@@ -299,6 +299,11 @@ def _load_or_new_metadata(out_dir: Path, spec: MatchSpec, seeds: list[int], extr
         "base_seed": spec.base_seed, "prompt_version": PROMPT_VERSION, "parser_version": PARSER_VERSION,
         "memory": _memory_metadata(spec),
     }
+    stored_version = (metadata.get("memory") or {}).get("memory_version")
+    wanted_version = (expected["memory"] or {}).get("memory_version")
+    if expected["memory"] is not None and stored_version != wanted_version:
+        raise ValueError(f"cannot resume {out_dir}: it was run with memory_version={stored_version!r},"
+                         f" not {wanted_version!r}")
     for key, value in expected.items():
         if metadata.get(key) != value:
             raise ValueError(f"cannot resume {out_dir}: it was run with {key}={metadata.get(key)!r}, not {value!r}")

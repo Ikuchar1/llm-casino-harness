@@ -8,7 +8,7 @@ import pytest
 from agent.config import HarnessConfig
 from agent.ollama_client import ChatReply
 from poker.llm_player import MEMORY, PLAIN, PokerLLMPlayer
-from poker.memory import REWRITE_SYSTEM_PROMPT, memory_settings
+from poker.memory import MEMORY_VERSION, REWRITE_SYSTEM_PROMPT, memory_settings
 from poker.parser import PARSER_VERSION
 from poker.prompt import PROMPT_VERSION, notes_block
 from poker.runner import BOT, MODEL, MatchSpec, deal_schedule, match_seeds, resolve_bot, run_match
@@ -206,6 +206,17 @@ def test_a_resume_keeps_the_original_model_digest_and_ollama_version_and_records
     assert all(session["status"] == "completed" for session in metadata["sessions"])
 
 
+def test_each_session_records_the_git_commit_it_ran_on_and_the_top_level_commit_is_kept(tmp_path):
+    out = tmp_path / "run"
+    run(out, n_pairs=1)
+    run(out, n_pairs=2)
+
+    metadata = json.loads((out / "metadata.json").read_text())
+    assert len(metadata["sessions"]) == 2
+    assert all("git_commit" in session for session in metadata["sessions"])
+    assert metadata["sessions"][-1]["git_commit"] == metadata["git_commit"]
+
+
 # ---------- The memory setup ----------
 
 NOTES_REPLY = "checks whenever it can | key checked_to.check | for 1 | against 0"
@@ -287,6 +298,20 @@ def test_a_memory_run_records_the_memory_settings_in_its_metadata(tmp_path):
     assert metadata["setup"] == "memory" and metadata["setup_flags"]["memory"] is True
     assert metadata["memory"] == memory_settings()
     assert metadata["memory"]["rewrite_every"] == 5 and metadata["memory"]["rewrite_system_prompt"] == REWRITE_SYSTEM_PROMPT
+
+
+def test_resuming_a_memory_run_started_under_another_memory_version_is_refused_before_anything_is_played(tmp_path):
+    out = tmp_path / "run"
+    memory_run(out, n_pairs=3)
+    metadata = json.loads((out / "metadata.json").read_text())
+    metadata["memory"]["memory_version"] = "memory-v1"
+    (out / "metadata.json").write_text(json.dumps(metadata))
+    before = [(out / name).read_text() for name in ("hands.jsonl", "decisions.jsonl", "memory.jsonl")]
+
+    with pytest.raises(ValueError, match=f"cannot resume.*memory_version='memory-v1', not '{MEMORY_VERSION}'"):
+        memory_run(out, n_pairs=6)
+    assert [(out / name).read_text() for name in ("hands.jsonl", "decisions.jsonl", "memory.jsonl")] == before
+    assert len(json.loads((out / "metadata.json").read_text())["sessions"]) == 1
 
 
 def in_the_big_blind_after_the_first_rewrite(client, system, user):

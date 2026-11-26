@@ -628,9 +628,16 @@ class MemoryState:
         return render_notes_block(self.notes)
 
 
+# Bump this on any change to the memory prompts (rewrite system or user prompt, tally text),
+# the notes header, the nudge, the evidence wording or the verify/gate rules: a resume refuses
+# a run logged under another version, so one match never mixes two memory setups.
+MEMORY_VERSION = "memory-v2"
+
+
 def memory_settings() -> dict[str, Any]:
     """Every constant that shapes the memory setup, for metadata.json (a resume must match them)."""
     return {
+        "memory_version": MEMORY_VERSION,
         "rewrite_every": REWRITE_EVERY,
         "recent_hands": RECENT_HANDS,
         "max_hypotheses": MAX_HYPOTHESES,

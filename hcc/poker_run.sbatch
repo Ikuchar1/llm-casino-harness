@@ -17,7 +17,7 @@
 #   $1 (or SETUP) = harness setup: plain or memory
 #   $2 (or BOT)   = opponent bot: calling_station, maniac, rock or control
 # Output: results/poker_runs/qwen2.5-7b/<setup>/<bot>/ (decisions.jsonl, hands.jsonl,
-# metadata.json), and poker_run.<jobid>.out plus ollama_serve.<jobid>.log in the repo root.
+# metadata.json, and memory.jsonl for the memory setup), and poker_run.<jobid>.out plus ollama_serve.<jobid>.log in the repo root.
 #
 # Resuming is a feature here: scripts/run_poker.py resumes when --out already exists, even
 # halfway through a seed pair. If the job hits the time limit, resubmit the exact same command
