@@ -47,6 +47,15 @@ class Maniac(_Bot):
         return MIN_RAISE if state.to_call else RAISE_TWO_THIRDS_POT
 
 
+RAISE_CAP = 3
+_CALM_ACTIONS = (FOLD, CHECK, CALL)
+
+
+def _raises_this_street(state: DecisionState) -> int:
+    """Every bet or raise so far on this street, by either player (blinds not counted)."""
+    return sum(1 for action in state.history if action.street == state.street and action.action not in _CALM_ACTIONS)
+
+
 class Rock(_Bot):
     """Plays only premium hands preflop and only top pair or better after the flop."""
 
@@ -67,6 +76,18 @@ def _is_premium(hole_cards: tuple[str, ...]) -> bool:
     if high == low:
         return RANKS.index(high) >= RANKS.index(_PREMIUM_PAIR_MIN)
     return high == "A" and low in _PREMIUM_ACE_KICKERS
+
+
+def _has_top_pair_or_better(state: DecisionState) -> bool:
+    """One hole card pairs the highest board card, a pocket pair above the board, or any
+    stronger made hand (two pair or better that the hole cards improve on the board's own).
+    """
+    top = max(RANKS.index(card[0]) for card in state.board)
+    hole = [RANKS.index(card[0]) for card in state.hole_cards]
+    if top in hole or (hole[0] == hole[1] and hole[0] > top):
+        return True
+    made = category([*state.hole_cards, *state.board])
+    return made >= TWO_PAIR and made > category(list(state.board))
 
 
 class Control(_Bot):
@@ -116,33 +137,12 @@ def _pot_odds(state: DecisionState) -> float:
     return state.to_call / (state.pot + state.to_call)
 
 
-RAISE_CAP = 3
-_CALM_ACTIONS = (FOLD, CHECK, CALL)
-
-
-def _raises_this_street(state: DecisionState) -> int:
-    """Every bet or raise so far on this street, by either player (blinds not counted)."""
-    return sum(1 for action in state.history if action.street == state.street and action.action not in _CALM_ACTIONS)
-
-
 def _can_raise(state: DecisionState) -> bool:
     return any(item.action == MIN_RAISE for item in state.menu)
 
 
 def _check_or_call(state: DecisionState) -> str:
     return CALL if state.to_call else CHECK
-
-
-def _has_top_pair_or_better(state: DecisionState) -> bool:
-    """One hole card pairs the highest board card, a pocket pair above the board, or any
-    stronger made hand (two pair or better that the hole cards improve on the board's own).
-    """
-    top = max(RANKS.index(card[0]) for card in state.board)
-    hole = [RANKS.index(card[0]) for card in state.hole_cards]
-    if top in hole or (hole[0] == hole[1] and hole[0] > top):
-        return True
-    made = category([*state.hole_cards, *state.board])
-    return made >= TWO_PAIR and made > category(list(state.board))
 
 
 def _bet_or_call(state: DecisionState) -> str:

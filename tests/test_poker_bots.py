@@ -9,7 +9,7 @@ import time
 
 from poker.bots import BOTS, make_bot
 from poker.cards import make_deck
-from poker.engine import Action, DecisionState, MenuItem
+from poker.engine import Action, DecisionState, MenuItem, play_match
 from poker.hands import equity_vs_random
 
 
@@ -227,3 +227,32 @@ def test_every_bot_gives_the_same_choice_for_the_same_state_even_from_a_fresh_in
     for name in BOTS:
         first, second = make_bot(name), make_bot(name)
         assert [first.decide(spot) for spot in spots] == [second.decide(spot) for spot in spots] == [first.decide(spot) for spot in spots]
+
+
+# ---------- Whole matches ----------
+
+
+def test_every_pair_of_bots_plays_a_50_seed_match_with_no_fallbacks_and_zero_sum_chip_deltas():
+    names = list(BOTS)
+    for index, first in enumerate(names):
+        for second in names[index + 1:]:
+            hands = play_match(seeds=list(range(50)), players={first: make_bot(first), second: make_bot(second)})
+
+            assert len(hands) == 100
+            assert all(sum(hand.chip_delta.values()) == 0 for hand in hands)
+            assert not any(decision.fallback for hand in hands for decision in hand.decisions), (first, second)
+
+
+def vpip(hands, name):
+    """Of the hands where `name` acted preflop (walks excluded), the share where it called or raised."""
+    preflop = [[d for d in hand.decisions if d.player == name and d.state.street == "preflop"] for hand in hands]
+    acted = [decisions for decisions in preflop if decisions]
+    played = sum(any(d.action not in ("fold", "check") for d in decisions) for decisions in acted)
+    return played / len(acted)
+
+
+def test_over_a_seeded_match_the_maniac_plays_almost_every_hand_and_the_rock_very_few():
+    hands = play_match(seeds=list(range(100)), players={"maniac": make_bot("maniac"), "rock": make_bot("rock")})
+
+    assert vpip(hands, "maniac") > 0.9
+    assert vpip(hands, "rock") < 0.15
