@@ -142,6 +142,17 @@ def test_the_tally_never_holds_the_opponents_hole_cards_from_hands_without_a_sho
     assert not any(card in str(tally.snapshot()) for card in hidden)
 
 
+def test_a_walk_where_the_opponent_had_no_preflop_decision_is_not_a_preflop_opportunity():
+    walk = hand(hero=["fold"])  # hero folds the button, so the big blind never acts
+    played = hand(seed=2, hand_number=1, villain=["call"], hero_on_button=False)
+
+    tally = tally_of(walk, played)
+
+    assert tally.hands == 2
+    for key in ("preflop.vpip", "preflop.no_vpip", "preflop.raise", "preflop.no_raise"):
+        assert sum(tally.counts(key)) == 1, key
+
+
 def test_the_button_completing_the_small_blind_has_not_faced_a_bet_only_the_big_blind():
     record = hand(hero=["check"], villain=["call"], hero_on_button=False)
 
@@ -223,6 +234,7 @@ def test_hypothesis_text_past_the_word_budget_is_cut_and_the_cut_is_logged():
     words = [len(h.text.split()) for h in result.notes.hypotheses]
     assert words == [60, WORD_BUDGET - 60]
     assert result.truncated
+    assert result.dropped == [response.splitlines()[2]]  # no words left for the third
 
 
 def test_notes_within_the_word_budget_are_not_marked_truncated():
@@ -239,15 +251,17 @@ def station_tally():
     return tally_of(*station_match())
 
 
-def test_a_cited_count_that_does_not_match_the_tally_is_replaced_by_the_true_count_and_logged():
+def test_a_cited_count_that_does_not_match_the_tally_is_replaced_by_the_true_count_downgraded_and_logged():
     tally = station_tally()
     true_for, true_against = tally.counts("faced_bet.continue")
+    assert status_for("faced_bet.continue", true_for, true_against) == CONFIRMED
     claimed = Notes((Hypothesis("never folds to bets", 3, 2, "faced_bet.continue"),))
 
     result = verify(claimed, tally)
 
     hypothesis = result.notes.hypotheses[0]
     assert (hypothesis.for_count, hypothesis.against_count) == (true_for, true_against)
+    assert hypothesis.status == TENTATIVE
     assert result.count_mismatches == [{
         "text": "never folds to bets", "opportunity_key": "faced_bet.continue",
         "cited": [3, 2], "tally": [true_for, true_against],
@@ -265,18 +279,18 @@ def test_a_cited_count_that_matches_the_tally_is_kept_and_not_logged_as_a_mismat
     assert result.notes.hypotheses[0].for_count == true_for
 
 
-def test_a_hypothesis_with_an_unknown_or_missing_key_is_kept_as_tentative_with_its_counts_and_logged_unverifiable():
+def test_a_hypothesis_with_an_unknown_or_missing_key_is_dropped_from_the_notes_and_logged_unverifiable():
+    tally = station_tally()
+    checked = Hypothesis("never folds", *tally.counts("faced_bet.continue"), "faced_bet.continue")
     claimed = Notes((
         Hypothesis("bluffs rivers", 30, 0, "river.bluff", CONFIRMED),
+        checked,
         Hypothesis("tilts after losing", 25, 1, None, CONFIRMED),
     ))
 
-    result = verify(claimed, station_tally())
+    result = verify(claimed, tally)
 
-    assert result.notes == Notes((
-        Hypothesis("bluffs rivers", 30, 0, "river.bluff", TENTATIVE),
-        Hypothesis("tilts after losing", 25, 1, None, TENTATIVE),
-    ))
+    assert [h.text for h in result.notes.hypotheses] == ["never folds"]
     assert result.unverifiable == ["bluffs rivers", "tilts after losing"]
     assert result.count_mismatches == []
 
@@ -353,6 +367,19 @@ def test_the_rewrite_prompt_shows_the_labelled_old_notes_the_tally_the_last_hand
     assert "rewrite" in prompt.lower() and "in full" in prompt.lower()
 
 
+def test_the_rewrite_prompt_says_to_cite_the_key_whose_outcome_supports_the_read_with_worked_examples():
+    prompt = build_rewrite_prompt(Notes(), tally_of(hand()), [hand()], "hero")
+
+    assert "cite the key whose outcome supports" in prompt
+    for read, key in (
+        ("never folds to bets", "faced_bet.continue"),
+        ("folds to most bets", "faced_bet.fold"),
+        ("always bets when checked to", "checked_to.bet"),
+        ("plays very few hands", "preflop.no_vpip"),
+    ):
+        assert f'"{read}" cites {key}' in prompt
+
+
 def test_the_first_rewrite_prompt_says_there_are_no_previous_notes():
     prompt = build_rewrite_prompt(Notes(), tally_of(hand()), [hand()], "hero")
 
@@ -362,27 +389,88 @@ def test_the_first_rewrite_prompt_says_there_are_no_previous_notes():
 # ---------- Decision-time notes block ----------
 
 
-def test_the_notes_block_lists_each_hypothesis_line_and_says_tentative_reads_only_nudge_play():
+def test_the_notes_block_shows_each_read_with_a_plain_english_evidence_line_for_its_key_and_the_nudge():
     notes = Notes((
-        Hypothesis("never folds to bets", 9, 0, "faced_bet.continue", CONFIRMED),
-        Hypothesis("plays every hand", 6, 0, "preflop.vpip", TENTATIVE),
+        Hypothesis("never folds to bets", 96, 0, "faced_bet.continue", CONFIRMED),
+        Hypothesis("plays very few hands", 6, 1, "preflop.no_vpip", TENTATIVE),
+        Hypothesis("bets the flop when checked to", 9, 1, "checked_to.bet.flop", CONFIRMED),
     ))
 
     block = render_notes_block(notes)
 
-    assert "never folds to bets | for 9 | against 0 | CONFIRMED" in block
-    assert "plays every hand | for 6 | against 0 | TENTATIVE" in block
+    assert (
+        '- "never folds to bets" — evidence: continued (called or raised) when facing a bet 96 of 96 times'
+        " — CONFIRMED"
+    ) in block.splitlines()
+    assert (
+        '- "plays very few hands" — evidence: did not put money in voluntarily preflop 6 of 7 hands'
+        " — TENTATIVE"
+    ) in block.splitlines()
+    assert (
+        '- "bets the flop when checked to" — evidence: bet with no bet to face on the flop 9 of 10 times'
+        " — CONFIRMED"
+    ) in block.splitlines()
+    assert "| for" not in block
     assert "TENTATIVE reads should only nudge your play" in block
+
+
+def test_never_folds_citing_faced_bet_continue_with_the_true_counts_is_confirmed_against_the_station():
+    memory = station_memory()
+    true_for, true_against = memory.tally.counts("faced_bet.continue")
+
+    memory.apply_rewrite(f"never folds | key faced_bet.continue | for {true_for} | against {true_against}")
+
+    assert [h.status for h in memory.notes.hypotheses] == [CONFIRMED]
+    assert f"facing a bet {true_for} of {true_for} times — CONFIRMED" in memory.notes_block()
+
+
+def test_a_read_whose_text_contradicts_its_key_shows_the_contradicting_evidence_against_the_station():
+    # The review's exploit: "folds to every bet" citing the key the station's never-folding fills.
+    memory = station_memory()
+    true_for, true_against = memory.tally.counts("faced_bet.continue")
+
+    memory.apply_rewrite(f"folds to every bet | key faced_bet.continue | for {true_for} | against {true_against}")
+
+    assert (
+        f'- "folds to every bet" — evidence: continued (called or raised) when facing a bet'
+        f" {true_for} of {true_for + true_against} times"
+    ) in memory.notes_block()
 
 
 def test_the_notes_block_never_exceeds_its_character_cap_and_keeps_the_nudge_line():
     long_text = "x" * 400
     notes = Notes(tuple(Hypothesis(long_text, 9, 0, "faced_bet.call", TENTATIVE) for _ in range(3)))
 
+    from poker.prompt import notes_block
+
     block = render_notes_block(notes)
 
-    assert len(block) <= NOTES_BLOCK_CHAR_CAP
+    assert len(notes_block(block).rstrip("\n")) <= NOTES_BLOCK_CHAR_CAP
     assert "TENTATIVE reads should only nudge your play" in block
+    assert block.count("— evidence: called when facing a bet 9 of 9 times — TENTATIVE") >= 1
+
+
+def test_three_reads_at_the_full_word_budget_with_the_longest_evidence_lines_fit_the_cap_uncut():
+    text = " ".join(["calls"] * (WORD_BUDGET // 3))  # 5 letters, about an average English word
+    notes = Notes(tuple(
+        Hypothesis(text, 960, 40, key, TENTATIVE)
+        for key in ("faced_bet.no_raise.preflop", "faced_bet.continue.river", "preflop.no_vpip")
+    ))
+
+    block = render_notes_block(notes)
+
+    assert block.count(f'"{text}"') == 3
+
+
+def test_the_notes_block_in_a_decision_prompt_has_exactly_one_header():
+    from poker.prompt import NOTES_HEADER, build_user_prompt
+    from tests.test_poker_prompt import flop_state
+
+    block = render_notes_block(Notes((Hypothesis("never folds to bets", 9, 0, "faced_bet.continue", CONFIRMED),)))
+    prompt = build_user_prompt(flop_state(), notes=block)
+
+    assert prompt.count(NOTES_HEADER) == 1
+    assert prompt.count("Your notes on") == 1
 
 
 def test_with_no_notes_yet_the_notes_block_is_empty():
@@ -479,9 +567,10 @@ def test_applying_a_rewrite_logs_old_raw_parsed_and_verified_notes_the_tally_and
     assert [h["for_count"] for h in logged["parsed_notes"]] == [3, 5]
     assert logged["verified_notes"][0] == {
         "text": "never folds to bets", "for_count": true_counts[0], "against_count": true_counts[1],
-        "opportunity_key": "faced_bet.continue", "status": CONFIRMED,
+        "opportunity_key": "faced_bet.continue", "status": TENTATIVE,  # cited 3/0, so downgraded
     }
-    assert logged["verified_notes"][1]["status"] == TENTATIVE
+    assert len(logged["verified_notes"]) == 1  # "bluffs a lot" cites no key, so it is not shown
+    assert logged["parsed_notes"][1]["text"] == "bluffs a lot"
     assert logged["tally"] == memory.tally.snapshot()
     assert logged["flags"] == {
         "count_mismatch": True, "unverifiable": True, "parse_failed": False, "truncated": False,
@@ -491,16 +580,25 @@ def test_applying_a_rewrite_logs_old_raw_parsed_and_verified_notes_the_tally_and
     assert logged["unverifiable"] == ["bluffs a lot"]
     assert logged["junk_lines"] == ["Notes:"]
     assert memory.notes == Notes(tuple(Hypothesis(**h) for h in logged["verified_notes"]))
-    assert "never folds to bets | for" in memory.notes_block()
+    assert '"never folds to bets" — evidence:' in memory.notes_block()
 
 
-def test_a_rewrite_that_does_not_parse_keeps_the_old_notes_unchanged_and_logs_parse_failed():
-    memory = station_memory()
-    memory.apply_rewrite("never folds to bets | key faced_bet.continue | for 1 | against 0")
+def test_a_rewrite_that_does_not_parse_keeps_the_old_reads_re_verified_against_the_current_tally():
+    records = station_match()
+    memory = MemoryState("hero")
+    for record in records[:4]:
+        memory.observe(record)
+    early = memory.tally.counts("preflop.vpip")
+    memory.apply_rewrite(f"plays every hand | key preflop.vpip | for {early[0]} | against {early[1]}")
+    assert memory.notes.hypotheses[0].status == TENTATIVE  # too few hands yet
     kept = memory.notes
+    for record in records[4:]:
+        memory.observe(record)
+    now = memory.tally.counts("preflop.vpip")
 
     event = memory.apply_rewrite("I have no idea.")
 
-    assert memory.notes == kept
     assert event.flags["parse_failed"] and not event.flags["count_mismatch"]
-    assert event.old_notes == event.verified_notes == [dataclasses.asdict(h) for h in kept.hypotheses]
+    assert event.old_notes == event.parsed_notes == [dataclasses.asdict(h) for h in kept.hypotheses]
+    assert memory.notes == Notes((Hypothesis("plays every hand", *now, "preflop.vpip", CONFIRMED),))
+    assert event.verified_notes == [dataclasses.asdict(h) for h in memory.notes.hypotheses]

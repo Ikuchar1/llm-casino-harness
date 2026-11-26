@@ -19,8 +19,12 @@ from poker.engine import (
 # v2: the answer format asks for the exact menu name, says bets use the raise_* names, gives an example.
 PROMPT_VERSION = "poker-v2"
 
-# The memory hook's block heading. Prompts without notes never contain it.
-NOTES_HEADER = "Your notes on this opponent from earlier hands:"
+# The memory hook's block heading, the only one (poker.memory.render_notes_block writes the
+# lines under it). Prompts without notes never contain it.
+NOTES_HEADER = (
+    "Your notes on this opponent from earlier hands (the quoted reads are yours; "
+    "the evidence is counted by the harness):"
+)
 
 _RANK_WORDS = {
     "2": "two", "3": "three", "4": "four", "5": "five", "6": "six", "7": "seven", "8": "eight",

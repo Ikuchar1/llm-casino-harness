@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from typing import Any, Optional
 
 from poker.engine import CALL, CHECK, FOLD, STREETS, DecisionState, HandRecord
+from poker.prompt import NOTES_HEADER
 
 POSTFLOP_STREETS = STREETS[1:]
 FACED_BET_OUTCOMES = ("fold", "call", "raise", "continue", "no_raise")
@@ -22,6 +23,7 @@ CHECKED_TO_OUTCOMES = ("bet", "check")
 MAX_HYPOTHESES = 3
 WORD_BUDGET = 100  # words of hypothesis text across all notes; counts and status are extra
 SHOWN_HANDS = 5  # most recent showdowns whose cards the tally text lists
+RAISE = "raise"  # any bet or raise size, all-in included
 
 
 @dataclass(frozen=True)
@@ -47,12 +49,13 @@ class OpponentTally:
         opponent = next(name for name in record.seats.values() if name != self.model_name)
         self.hands += 1
         preflop = [d for d in record.decisions if d.player == opponent and d.state.street == "preflop"]
-        vpip = any(d.action not in (FOLD, CHECK) for d in preflop)
-        raised = any(d.action not in (FOLD, CHECK, CALL) for d in preflop)
-        self._count("preflop.vpip", vpip)
-        self._count("preflop.no_vpip", not vpip)
-        self._count("preflop.raise", raised)
-        self._count("preflop.no_raise", not raised)
+        if preflop:  # a walk (the model folded the button) gave the opponent no preflop choice
+            vpip = any(d.action not in (FOLD, CHECK) for d in preflop)
+            raised = any(_outcome(d.action) == RAISE for d in preflop)
+            self._count("preflop.vpip", vpip)
+            self._count("preflop.no_vpip", not vpip)
+            self._count("preflop.raise", raised)
+            self._count("preflop.no_raise", not raised)
         if len(record.board) >= 3:  # heads-up, both players see any flop that is dealt
             self._count("showdown.reached", record.showdown)
         if record.showdown:  # the only hands whose opponent hole cards the model ever sees
@@ -139,9 +142,6 @@ class OpponentTally:
         }
 
 
-RAISE = "raise"  # any bet or raise size, all-in included
-
-
 def _outcome(action: str) -> str:
     return action if action in (FOLD, CHECK, CALL) else RAISE
 
@@ -225,7 +225,7 @@ class ParseResult:
 
     notes: Notes
     junk_lines: list[str]  # non-blank lines that were not a hypothesis
-    dropped: list[str]  # hypothesis lines past MAX_HYPOTHESES
+    dropped: list[str]  # hypothesis lines past MAX_HYPOTHESES, or left with no words by WORD_BUDGET
     truncated: bool  # hypothesis text was cut to fit WORD_BUDGET
     parse_failed: bool  # no hypothesis parsed, so the previous notes were kept
 
@@ -233,6 +233,7 @@ class ParseResult:
 def parse_rewrite(response: str, previous: Notes) -> ParseResult:
     """The model's rewrite as Notes; junk lines skipped, the previous notes kept if nothing parses."""
     hypotheses: list[Hypothesis] = []
+    lines: list[str] = []  # the line each hypothesis came from
     junk: list[str] = []
     dropped: list[str] = []
     for raw in (response or "").splitlines():
@@ -246,10 +247,11 @@ def parse_rewrite(response: str, previous: Notes) -> ParseResult:
             dropped.append(line)
         else:
             hypotheses.append(hypothesis)
+            lines.append(line)
     if not hypotheses:
         return ParseResult(previous, junk, dropped, False, True)
     kept, truncated = _fit_word_budget(hypotheses)
-    return ParseResult(Notes(tuple(kept)), junk, dropped, truncated, False)
+    return ParseResult(Notes(tuple(kept)), junk, lines[len(kept):] + dropped, truncated, False)
 
 
 def _fit_word_budget(hypotheses: list[Hypothesis]) -> tuple[list[Hypothesis], bool]:
@@ -303,30 +305,34 @@ def status_for(opportunity_key: str, for_count: int, against_count: int) -> str:
 
 @dataclass
 class VerifyResult:
-    notes: Notes  # with the tally's true counts and the harness-set status
+    notes: Notes  # with the tally's true counts and the harness-set status; unverifiable ones left out
     count_mismatches: list[dict[str, Any]]  # cited counts the harness replaced
-    unverifiable: list[str]  # texts of hypotheses whose key is not in OPPORTUNITY_KEYS
+    unverifiable: list[str]  # texts of hypotheses whose key is missing or not in OPPORTUNITY_KEYS (dropped)
 
 
 def verify(notes: Notes, tally: OpponentTally) -> VerifyResult:
-    """Check every cited count against the tally, correcting mismatches, and set each status."""
+    """Check every cited count against the tally and set each status.
+
+    A mismatched count is replaced by the true one, and that read is TENTATIVE for this
+    version whatever the true counts say. Reads with no known key are dropped.
+    """
     checked: list[Hypothesis] = []
     mismatches: list[dict[str, Any]] = []
     unverifiable: list[str] = []
     for hypothesis in notes.hypotheses:
-        if hypothesis.opportunity_key not in OPPORTUNITY_KEYS:
+        if hypothesis.opportunity_key not in OPPORTUNITY_KEYS:  # nothing to check it against: not shown
             unverifiable.append(hypothesis.text)
-            checked.append(dataclasses.replace(hypothesis, status=TENTATIVE))
             continue
         true_for, true_against = tally.counts(hypothesis.opportunity_key)
+        status = status_for(hypothesis.opportunity_key, true_for, true_against)
         if (hypothesis.for_count, hypothesis.against_count) != (true_for, true_against):
             mismatches.append({
                 "text": hypothesis.text, "opportunity_key": hypothesis.opportunity_key,
                 "cited": [hypothesis.for_count, hypothesis.against_count], "tally": [true_for, true_against],
             })
+            status = TENTATIVE  # the plan's downgrade: a model that misreads the tally loses CONFIRMED
         checked.append(dataclasses.replace(
-            hypothesis, for_count=true_for, against_count=true_against,
-            status=status_for(hypothesis.opportunity_key, true_for, true_against),
+            hypothesis, for_count=true_for, against_count=true_against, status=status,
         ))
     return VerifyResult(Notes(tuple(checked)), mismatches, unverifiable)
 
@@ -378,14 +384,57 @@ Last {len(recent_hands)} hands ("opp" is your opponent):
 
 Write at most {MAX_HYPOTHESES} hypotheses about how the opponent plays, one per line, in exactly this format:
 <what the opponent does> | key <tally key> | for <N> | against <M>
-Each line must cite one tally key from above (for example faced_bet.fold or preflop.vpip) and copy its for and against counts: for counts the times it happened, against the other opportunities.
+Each line must cite one tally key from above and copy its for and against counts: for counts the times that key's outcome happened, against the times it didn't.
+Always cite the key whose outcome supports your line, so a high for count backs it up. For example:
+- "never folds to bets" cites faced_bet.continue
+- "folds to most bets" cites faced_bet.fold
+- "always bets when checked to" cites checked_to.bet
+- "plays very few hands" cites preflop.no_vpip
 Keep all the lines under {WORD_BUDGET} words in total. Output only the hypothesis lines, nothing else."""
 
 
 # ---------- Decision-time notes block ----------
 
-NOTES_BLOCK_CHAR_CAP = 900  # fixed budget, so memory-on prompts differ from memory-off only by this block
-_NOTES_HEADER = "Your notes on the opponent (counts checked by the harness):"
+# What each key's `for` count measures, in plain English: "<what> <for> of <for + against> <unit>".
+_FACED_BET_WORDS = {
+    "fold": "folded",
+    "call": "called",
+    "raise": "raised",
+    "continue": "continued (called or raised)",
+    "no_raise": "did not raise (folded or called)",
+}
+_CHECKED_TO_WORDS = {"bet": "bet", "check": "checked"}
+_PREFLOP_WORDS = {
+    "vpip": "put money in voluntarily preflop",
+    "no_vpip": "did not put money in voluntarily preflop",
+    "raise": "raised preflop",
+    "no_raise": "did not raise preflop",
+}
+
+
+def evidence(opportunity_key: str, for_count: int, against_count: int) -> str:
+    """What the key's counts measure, e.g. 'folded when facing a bet on the flop 0 of 12 times'."""
+    family, outcome, *street = opportunity_key.split(".")
+    on_street = f" on the {street[0]}" if street else ""
+    of = f"{for_count} of {for_count + against_count}"
+    if family == "faced_bet":
+        return f"{_FACED_BET_WORDS[outcome]} when facing a bet{on_street} {of} times"
+    if family == "checked_to":
+        return f"{_CHECKED_TO_WORDS[outcome]} with no bet to face{on_street} {of} times"
+    if family == "preflop":
+        return f"{_PREFLOP_WORDS[outcome]} {of} hands"
+    return f"went to showdown {of} hands that saw a flop"
+
+
+def shown_line(hypothesis: Hypothesis) -> str:
+    """A verified read as the decision prompt shows it: the model's text, then the harness's evidence."""
+    counts = evidence(hypothesis.opportunity_key, hypothesis.for_count, hypothesis.against_count)
+    return f'"{hypothesis.text}" — evidence: {counts} — {hypothesis.status}'
+
+
+# Fixed budget for the whole block in the prompt (poker.prompt's header included), so
+# memory-on prompts differ from memory-off only by this block.
+NOTES_BLOCK_CHAR_CAP = 1200  # fits 3 reads at the full WORD_BUDGET with their evidence lines
 _NUDGE = (
     "CONFIRMED reads rest on enough opportunities to act on; "
     "TENTATIVE reads should only nudge your play, not override it."
@@ -393,22 +442,25 @@ _NUDGE = (
 
 
 def render_notes_block(notes: Notes) -> str:
-    """The capped notes block for the decision prompt; empty while there are no notes."""
+    """The capped notes lines and nudge for the decision prompt; empty while there are no notes.
+
+    poker.prompt.notes_block puts NOTES_HEADER above it; the cap counts that header too.
+    """
     if not notes.hypotheses:
         return ""
-    room = NOTES_BLOCK_CHAR_CAP - len(_NOTES_HEADER) - len(_NUDGE) - 1  # newline after the header
+    room = NOTES_BLOCK_CHAR_CAP - len(NOTES_HEADER) - len(_NUDGE) - 1  # newline after the header
     lines: list[str] = []
     for hypothesis in notes.hypotheses:
-        line = "- " + hypothesis.line()
-        if len(line) + 1 > room:  # cut the text, never the counts and status
-            tail = line[len("- " + hypothesis.text):]
-            text_room = room - 1 - len("- ") - len(tail)
+        line = "- " + shown_line(hypothesis)
+        if len(line) + 1 > room:  # cut the text, never the evidence and status
+            tail = line[len('- "' + hypothesis.text):]
+            text_room = room - 1 - len('- "') - len(tail)
             if text_room <= 0:
                 break
-            line = "- " + hypothesis.text[:text_room] + tail
+            line = '- "' + hypothesis.text[:text_room] + tail
         lines.append(line)
         room -= len(line) + 1
-    return "\n".join([_NOTES_HEADER, *lines, _NUDGE])
+    return "\n".join([*lines, _NUDGE])
 
 
 # ---------- Logging ----------
@@ -496,12 +548,17 @@ class MemoryState:
     def apply_rewrite(self, response: Optional[str]) -> MemoryEvent:
         """Parse the model's rewrite, verify it against the tally, make it the notes, and log it.
 
-        If nothing parses, the old notes stay exactly as they were (not re-verified).
+        If nothing parses, the old reads are kept but re-verified against the current tally,
+        so their counts and statuses never go stale.
         """
         old = self.notes
         parsed = parse_rewrite(response, old)
-        if parsed.parse_failed:
-            checked = VerifyResult(old, [], [])
+        if parsed.parse_failed:  # the model cited nothing new: refresh the old reads' counts, then re-gate
+            checked = verify(Notes(tuple(
+                dataclasses.replace(h, for_count=f, against_count=a)
+                for h in old.hypotheses
+                for f, a in [self.tally.counts(h.opportunity_key)]
+            )), self.tally)
         else:
             checked = verify(parsed.notes, self.tally)
         self.notes = checked.notes
