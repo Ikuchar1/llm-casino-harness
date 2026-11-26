@@ -134,7 +134,10 @@ def test_a_scripted_player_runs_the_memory_setup_and_logs_empty_rewrites_without
 
 
 class MemoryFakeOllama(FakeOllama):
-    """Check/call for decisions; a read citing faced_bet.continue for each notes rewrite. Keeps every call."""
+    """Check/call for decisions; for each notes rewrite, a read copying the prompt's checked_to.check line. Keeps every call.
+
+    Nobody bets in these runs, so checked_to.check is listed at every rewrite (faced_bet keys are 0/0, never listed).
+    """
 
     calls = []
 
@@ -144,7 +147,8 @@ class MemoryFakeOllama(FakeOllama):
 
         MemoryFakeOllama.calls.append((system, user))
         if system == REWRITE_SYSTEM_PROMPT:
-            reply = "never folds to bets | key faced_bet.continue | for 1 | against 0"
+            tally_line = next(line.strip() for line in user.splitlines() if line.strip().startswith("key checked_to.check |"))
+            reply = f"always checks when checked to | {tally_line}"
             return ChatReply(content=reply, done_reason="stop", eval_count=25, latency_s=0.2, prompt_eval_count=800)
         return super().chat(system, user)
 
@@ -167,7 +171,8 @@ def test_a_memory_run_against_the_calling_station_rewrites_every_five_committed_
     events = read_jsonl(out / "memory.jsonl")
     assert [event["hand_number"] for event in events] == [5, 9, 15, 19]
     assert [event["notes_version"] for event in events] == [0, 1, 2, 3]
-    assert all(event["verified_notes"][0]["opportunity_key"] == "faced_bet.continue" for event in events)
+    assert all(event["verified_notes"][0]["opportunity_key"] == "checked_to.check" for event in events)
+    assert not any(event["flags"]["count_mismatch"] or event["flags"]["unlisted_key"] for event in events)
     model_rows = [row for row in read_jsonl(out / "decisions.jsonl") if row["player"] == "model"]
     assert {row["hand_number"] for row in model_rows} == set(range(20))
     for row in model_rows:
