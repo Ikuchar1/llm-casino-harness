@@ -4,6 +4,7 @@ Usage (from the repo root):
     .venv/bin/python scripts/run_poker.py --bot calling_station --pairs 50 --seed 2026
     .venv/bin/python scripts/run_poker.py --bot maniac --pairs 1 --seed 2026 --model qwen2.5:7b --out runs/smoke
     .venv/bin/python scripts/run_poker.py --player station --bot rock --pairs 5 --seed 1 --out /tmp/poker_test
+    .venv/bin/python scripts/run_poker.py --setup memory --bot calling_station --pairs 10 --seed 2026 --out runs/smoke_memory
 
 Each seed is dealt twice (model on the button, then the bot), so --pairs N plays 2N
 hands. --player random|station swaps the LLM for a scripted player (no Ollama needed),
@@ -11,7 +12,11 @@ for testing. Re-running with the same --out resumes the same run, even halfway
 through a pair; model, setup, bot, seed and the model's digest must match (exit 2
 otherwise). Each session records the platform it ran on.
 
-Writes <out>/decisions.jsonl, hands.jsonl and metadata.json.
+--setup memory keeps opponent notes that the model rewrites every 5 committed hands
+(with a scripted player the rewrites get no reply and log empty notes).
+
+Writes <out>/decisions.jsonl, hands.jsonl and metadata.json, plus memory.jsonl (one row
+per notes rewrite) in the memory setup.
 """
 
 import argparse
@@ -118,11 +123,7 @@ def main() -> int:
     extra: dict[str, Any] = {"player": args.player, "python_version": platform.python_version(), **where}
     if args.player == "llm":
         model = args.model
-        try:  # before anything is written, so an unbuilt setup leaves no run folder behind
-            player: Any = PokerLLMPlayer(OllamaClient(model=model), setup)
-        except NotImplementedError as error:
-            print(f"ERROR: setup {setup.name!r} can't run yet: {error}", file=sys.stderr)
-            return 2
+        player: Any = PokerLLMPlayer(OllamaClient(model=model), setup)
         try:
             extra.update(ollama_metadata(model))
         except RuntimeError as error:

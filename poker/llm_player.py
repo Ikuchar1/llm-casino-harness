@@ -14,8 +14,9 @@ from dataclasses import dataclass
 from typing import Any, Optional
 
 from agent.config import HarnessConfig
-from agent.ollama_client import ChatClient
+from agent.ollama_client import ChatClient, ChatReply
 from poker.engine import DecisionState
+from poker.memory import REWRITE_SYSTEM_PROMPT
 from poker.parser import PARSER_VERSION, parse_choice
 from poker.prompt import PROMPT_VERSION, build_system_prompt, build_user_prompt
 
@@ -26,7 +27,7 @@ MEMORY = HarnessConfig(name="memory", memory=True)
 SETUPS: dict[str, HarnessConfig] = {setup.name: setup for setup in (PLAIN, MEMORY)}
 
 # Harness components this player can run; anything else raises NotImplementedError.
-BUILT_COMPONENTS: set[str] = set()
+BUILT_COMPONENTS: set[str] = {"memory"}
 
 
 @dataclass
@@ -56,7 +57,7 @@ class PokerLLMPlayer:
         self.client = client
         self.config = config
         self.system_prompt = build_system_prompt()
-        # MEMORY HOOK: the opponent notes block for the next decisions (unused until memory is built).
+        # The opponent notes block for the next decisions; the runner sets it in the memory setup.
         self.notes: Optional[str] = None
         self._details: list[PokerDecisionDetail] = []
 
@@ -80,6 +81,10 @@ class PokerLLMPlayer:
             latency_s=reply.latency_s,
         ))
         return result.action if result.action is not None else result.named
+
+    def rewrite_notes(self, prompt: str) -> ChatReply:
+        """The memory setup's notes rewrite: same client and options as the decisions."""
+        return self.client.chat(REWRITE_SYSTEM_PROMPT, prompt)
 
     def run_metadata(self) -> dict[str, Any]:
         """Run-level facts about this player's prompts, for metadata.json."""

@@ -2,6 +2,7 @@
 
 import importlib.util
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -98,15 +99,65 @@ def test_the_llm_player_runs_through_the_ollama_client_and_records_the_model(tmp
     assert model_rows and all(row["raw_response"] == "ACTION: check/call" for row in model_rows)
 
 
-def test_the_memory_setup_is_refused_with_exit_2_before_anything_is_written(tmp_path, monkeypatch):
-    module = load_script()
-    monkeypatch.setattr(module, "OllamaClient", FakeOllama)
+def test_a_scripted_player_runs_the_memory_setup_and_logs_empty_rewrites_without_ollama(tmp_path, monkeypatch):
     out = tmp_path / "run"
-    monkeypatch.setattr(sys, "argv", ["run_poker.py", "--setup", "memory", "--bot", "scripted", "--pairs", "1",
-                                      "--seed", "5", "--out", str(out)])
 
-    assert module.main() == 2
-    assert not out.exists()
+    code = run_cli(monkeypatch, "--player", "random", "--setup", "memory", "--bot", "scripted", "--pairs", "3",
+                   "--seed", "5", "--out", str(out))
+
+    assert code == 0
+    assert json.loads((out / "metadata.json").read_text())["setup"] == "memory"
+    event, = read_jsonl(out / "memory.jsonl")
+    assert (event["hand_number"], event["raw_response"], event["verified_notes"], event["notes_block"]) == (5, None, [], "")
+    assert event["flags"]["parse_failed"] is True
+
+
+class MemoryFakeOllama(FakeOllama):
+    """Check/call for decisions; a read citing faced_bet.continue for each notes rewrite. Keeps every call."""
+
+    calls = []
+
+    def chat(self, system, user):
+        from agent.ollama_client import ChatReply
+        from poker.memory import REWRITE_SYSTEM_PROMPT
+
+        MemoryFakeOllama.calls.append((system, user))
+        if system == REWRITE_SYSTEM_PROMPT:
+            reply = "never folds to bets | key faced_bet.continue | for 1 | against 0"
+            return ChatReply(content=reply, done_reason="stop", eval_count=25, latency_s=0.2, prompt_eval_count=800)
+        return super().chat(system, user)
+
+
+def test_a_memory_run_against_the_calling_station_rewrites_every_five_committed_hands_and_never_shows_a_pending_hand(
+        tmp_path, monkeypatch):
+    from poker.prompt import NOTES_HEADER
+
+    module = load_script()
+    MemoryFakeOllama.calls = []
+    monkeypatch.setattr(module, "OllamaClient", MemoryFakeOllama)
+    monkeypatch.setattr(module, "get_model_digest", lambda model: "sha256:abc")
+    monkeypatch.setattr(module, "get_ollama_version", lambda: "0.9.0")
+    out = tmp_path / "run"
+    monkeypatch.setattr(sys, "argv", ["run_poker.py", "--model", "fake:1b", "--setup", "memory", "--bot", "calling_station",
+                                      "--pairs", "10", "--seed", "5", "--out", str(out)])
+
+    assert module.main() == 0
+
+    events = read_jsonl(out / "memory.jsonl")
+    assert [event["hand_number"] for event in events] == [5, 9, 15, 19]
+    assert [event["notes_version"] for event in events] == [0, 1, 2, 3]
+    assert all(event["verified_notes"][0]["opportunity_key"] == "faced_bet.continue" for event in events)
+    model_rows = [row for row in read_jsonl(out / "decisions.jsonl") if row["player"] == "model"]
+    assert {row["hand_number"] for row in model_rows} == set(range(20))
+    for row in model_rows:
+        assert (NOTES_HEADER in row["prompt"]) == (row["hand_number"] >= 6)
+        rewrites_before = sum(event["hand_number"] < row["hand_number"] for event in events)
+        assert row["notes_version"] == (rewrites_before - 1 if rewrites_before else None)
+    for event in events:  # a rewrite shows committed hands only: never the first deal of a pair still pending
+        shown = [int(number) for number in re.findall(r"^hand (\d+):", event["rewrite_prompt"], re.MULTILINE)]
+        assert shown and max(shown) == event["hand_number"] and event["hand_number"] % 2 == 1
+    rewrite_calls = [user for system, user in MemoryFakeOllama.calls if "Rewrite your notes" in user]
+    assert rewrite_calls == [event["rewrite_prompt"] for event in events]
 
 
 def test_an_uninstalled_model_exits_1(tmp_path, monkeypatch):

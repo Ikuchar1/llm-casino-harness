@@ -364,6 +364,13 @@ def render_hand(record: HandRecord, model_name: str) -> str:
     return " | ".join(parts)
 
 
+# The system message of every rewrite call (the decision system prompt is about playing, not notes).
+REWRITE_SYSTEM_PROMPT = (
+    "You keep short, evidence-based notes about a poker opponent. "
+    "Answer only with hypothesis lines in the exact format the user asks for."
+)
+
+
 def build_rewrite_prompt(
     previous: Notes, tally: OpponentTally, recent_hands: list[HandRecord], model_name: str
 ) -> str:
@@ -585,8 +592,37 @@ class MemoryState:
             dropped_lines=parsed.dropped,
         )
 
+    def restore(self, event: dict[str, Any]) -> None:
+        """Take a logged MemoryEvent's notes as if its rewrite were just applied (resume, no model call).
+
+        The event must come from this same point in the match: its hands_seen must equal the
+        committed hands re-observed so far (ValueError otherwise).
+        """
+        if event["hands_seen"] != self.tally.hands:
+            raise ValueError(
+                f"memory event logged at {event['hands_seen']} committed hands, but {self.tally.hands} are committed"
+            )
+        self.notes = Notes(tuple(Hypothesis(**hypothesis) for hypothesis in event["verified_notes"]))
+        self._rewritten_through = self.tally.hands // REWRITE_EVERY
+
     def rewrite_prompt(self) -> str:
         return build_rewrite_prompt(self.notes, self.tally, list(self.recent), self.model_name)
 
     def notes_block(self) -> str:
         return render_notes_block(self.notes)
+
+
+def memory_settings() -> dict[str, Any]:
+    """Every constant that shapes the memory setup, for metadata.json (a resume must match them)."""
+    return {
+        "rewrite_every": REWRITE_EVERY,
+        "recent_hands": RECENT_HANDS,
+        "max_hypotheses": MAX_HYPOTHESES,
+        "word_budget": WORD_BUDGET,
+        "notes_block_char_cap": NOTES_BLOCK_CHAR_CAP,
+        "leak_threshold": LEAK_THRESHOLD,
+        "hand_frequency_threshold": HAND_FREQUENCY_THRESHOLD,
+        "max_against_share": MAX_AGAINST_SHARE,
+        "shown_hands": SHOWN_HANDS,
+        "rewrite_system_prompt": REWRITE_SYSTEM_PROMPT,
+    }

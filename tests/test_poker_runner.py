@@ -7,9 +7,10 @@ import pytest
 
 from agent.config import HarnessConfig
 from agent.ollama_client import ChatReply
-from poker.llm_player import PLAIN, PokerLLMPlayer
+from poker.llm_player import MEMORY, PLAIN, PokerLLMPlayer
+from poker.memory import REWRITE_SYSTEM_PROMPT, memory_settings
 from poker.parser import PARSER_VERSION
-from poker.prompt import PROMPT_VERSION
+from poker.prompt import PROMPT_VERSION, notes_block
 from poker.runner import BOT, MODEL, MatchSpec, deal_schedule, match_seeds, resolve_bot, run_match
 
 
@@ -190,3 +191,121 @@ def test_a_resume_keeps_the_original_model_digest_and_ollama_version_and_records
     assert (metadata["model_digest"], metadata["ollama_version"]) == ("sha256:same", "0.9.0")
     assert [session["hostname"] for session in metadata["sessions"]] == ["mac", "hcc-node"]
     assert all(session["status"] == "completed" for session in metadata["sessions"])
+
+
+# ---------- The memory setup ----------
+
+NOTES_REPLY = "checks whenever it can | key checked_to.check | for 1 | against 0"
+
+
+class NotesClient:
+    """Check/call for every decision, the same notes for every rewrite; optionally fails once on a given call."""
+
+    model = "fake:1b"
+
+    def __init__(self, fail_on=None):
+        self.fail_on = fail_on  # (system, user) -> True to raise, like Ollama going down
+        self.rewrites = 0
+        self.failed = False
+
+    def chat(self, system, user):
+        if self.fail_on and not self.failed and self.fail_on(self, system, user):
+            self.failed = True
+            raise RuntimeError("Ollama is down")
+        if system == REWRITE_SYSTEM_PROMPT:
+            self.rewrites += 1
+            return ChatReply(content=NOTES_REPLY, done_reason="stop", eval_count=20, latency_s=0.5, prompt_eval_count=900)
+        return ChatReply(content="ACTION: check/call", done_reason="stop", eval_count=7, latency_s=0.25, prompt_eval_count=640)
+
+
+def memory_run(out, client=None, n_pairs=6):
+    player = PokerLLMPlayer(client or NotesClient(), MEMORY)
+    return run_match(out, spec(setup=MEMORY, n_pairs=n_pairs), player, bots={"scripted": CheckCallPlayer})
+
+
+def test_a_plain_run_writes_no_memory_log_and_its_rows_have_no_notes_version(tmp_path):
+    run(tmp_path / "run", PokerLLMPlayer(AlwaysClient("ACTION: check/call")))
+
+    assert not (tmp_path / "run" / "memory.jsonl").exists()
+    assert all(row["notes_version"] is None for row in read_jsonl(tmp_path / "run" / "decisions.jsonl"))
+    assert json.loads((tmp_path / "run" / "metadata.json").read_text())["memory"] is None
+
+
+def test_a_memory_run_logs_each_rewrite_after_the_hand_it_followed_with_its_call_details(tmp_path):
+    memory_run(tmp_path / "run")
+
+    out = tmp_path / "run"
+    run_id = json.loads((out / "metadata.json").read_text())["run_id"]
+    events = read_jsonl(out / "memory.jsonl")
+    assert [(e["notes_version"], e["hand_number"], e["hands_seen"]) for e in events] == [(0, 5, 6), (1, 9, 10)]
+    first = events[0]
+    assert {key: first[key] for key in ("run_id", "model", "setup", "bot")} == {
+        "run_id": run_id, "model": "fake:1b", "setup": "memory", "bot": "scripted"}
+    assert first["rewrite_prompt"].startswith("You are playing heads-up") and "hand 5:" in first["rewrite_prompt"]
+    assert first["raw_response"] == NOTES_REPLY and first["verified_notes"][0]["text"] == "checks whenever it can"
+    assert (first["latency_s"], first["eval_count"], first["prompt_tokens"], first["done_reason"]) == (0.5, 20, 900, "stop")
+    assert first["notes_block"].startswith('- "checks whenever it can" — evidence:')
+
+
+def test_decision_prompts_differ_from_the_plain_runs_only_by_the_notes_block_in_effect_and_log_its_version(tmp_path):
+    run_match(tmp_path / "plain", spec(n_pairs=6), PokerLLMPlayer(NotesClient()), bots={"scripted": CheckCallPlayer})
+    memory_run(tmp_path / "memory")
+
+    events = read_jsonl(tmp_path / "memory" / "memory.jsonl")
+    plain = [row for row in read_jsonl(tmp_path / "plain" / "decisions.jsonl") if row["player"] == MODEL]
+    memory = [row for row in read_jsonl(tmp_path / "memory" / "decisions.jsonl") if row["player"] == MODEL]
+    assert len(plain) == len(memory)
+    versions = {row["hand_number"]: row["notes_version"] for row in memory}
+    assert versions == {hand: None if hand <= 5 else 0 if hand <= 9 else 1 for hand in range(12)}
+    for before, after in zip(plain, memory):
+        if after["notes_version"] is None:
+            assert after["prompt"] == before["prompt"]
+        else:
+            block = notes_block(events[after["notes_version"]]["notes_block"])
+            assert after["prompt"] == before["prompt"].replace("Legal actions:", block + "Legal actions:")
+    bot_rows = [row for row in read_jsonl(tmp_path / "memory" / "decisions.jsonl") if row["player"] == BOT]
+    assert all(row["notes_version"] is None for row in bot_rows)
+
+
+def test_a_memory_run_records_the_memory_settings_in_its_metadata(tmp_path):
+    memory_run(tmp_path / "run")
+
+    metadata = json.loads((tmp_path / "run" / "metadata.json").read_text())
+    assert metadata["setup"] == "memory" and metadata["setup_flags"]["memory"] is True
+    assert metadata["memory"] == memory_settings()
+    assert metadata["memory"]["rewrite_every"] == 5 and metadata["memory"]["rewrite_system_prompt"] == REWRITE_SYSTEM_PROMPT
+
+
+def in_the_big_blind_after_the_first_rewrite(client, system, user):
+    """Hand 7: the second deal of pair 3, so its first deal (hand 6) is still pending in memory."""
+    return client.rewrites == 1 and user.startswith("You are in the big blind")
+
+
+def during_the_first_rewrite(client, system, user):
+    """After hand 5 was written, before its rewrite was logged."""
+    return system == REWRITE_SYSTEM_PROMPT
+
+
+@pytest.mark.parametrize("fail_on", [in_the_big_blind_after_the_first_rewrite, during_the_first_rewrite])
+def test_an_interrupted_memory_run_resumes_to_the_same_hands_rewrites_and_notes_versions_as_an_uninterrupted_one(tmp_path, fail_on):
+    out = tmp_path / "run"
+    with pytest.raises(RuntimeError):
+        memory_run(out, NotesClient(fail_on))
+
+    resumed = NotesClient()
+    memory_run(out, resumed)
+    memory_run(tmp_path / "clean")
+
+    for name in ("hands.jsonl", "decisions.jsonl", "memory.jsonl"):
+        assert without_run_id(read_jsonl(out / name)) == without_run_id(read_jsonl(tmp_path / "clean" / name))
+    assert resumed.rewrites == (1 if fail_on is in_the_big_blind_after_the_first_rewrite else 2)
+    assert [s["status"] for s in json.loads((out / "metadata.json").read_text())["sessions"]] == ["error", "completed"]
+
+
+def test_resuming_a_memory_run_whose_memory_log_lost_a_rewrite_before_later_hands_is_refused(tmp_path):
+    out = tmp_path / "run"
+    memory_run(out, n_pairs=5)
+    (out / "memory.jsonl").write_text("")
+
+    with pytest.raises(ValueError, match="cannot resume.*no logged rewrite after hand 5"):
+        memory_run(out, n_pairs=6)

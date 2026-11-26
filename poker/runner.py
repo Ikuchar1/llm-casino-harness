@@ -4,6 +4,12 @@ The match is laid out as a deal schedule (engine-independent): seed i is dealt a
 hands 2i (model on the button) and 2i+1 (bot on the button), the same order as
 poker.engine.play_match. The runner plays each deal with play_hand, so a resumed
 match replays only the deals missing from hands.jsonl, even halfway through a pair.
+
+In the memory setup (docs/poker-plan.md, "Memory") the runner keeps one MemoryState per
+match: it observes every hand, makes the notes rewrite call when one is due, logs each
+rewrite to memory.jsonl, and shows the notes block in every decision prompt after the
+first rewrite. A resume rebuilds the memory from the logged hands and the logged
+rewrites, without calling the model, except for a rewrite the interruption cut off.
 """
 
 import importlib.metadata
@@ -19,8 +25,9 @@ from typing import Any, Callable, Mapping, Optional
 from agent.config import HarnessConfig
 from poker.engine import Player, play_hand
 from poker.parser import PARSER_VERSION
+from poker.memory import MemoryState, memory_settings
 from poker.prompt import PROMPT_VERSION
-from poker.run_log import PokerRunWriter, decision_rows, hand_row
+from poker.run_log import PokerRunWriter, decision_rows, hand_row, record_from_rows
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -39,6 +46,9 @@ LLM_FIELDS = {
     "prompt_tokens": "prompt_tokens",
     "latency_s": "latency_s",
 }
+# After those, every decision row has "notes_version": the index in memory.jsonl of the
+# rewrite whose notes the model's prompt showed; None before the first rewrite, for bot
+# rows, and in every setup without memory.
 
 # Run facts a resume never overwrites: the weights and server the run started with.
 KEPT_ON_RESUME = ("model_digest", "ollama_version")
@@ -155,6 +165,8 @@ def run_match(
     wanted = {deal.hand_number for deal in schedule}
     previous = [row for row in writer.hand_rows() if row["hand_number"] in wanted]
     done = {row["hand_number"] for row in previous}
+    memory = MemoryState(MODEL) if spec.setup.memory else None
+    events: list[dict[str, Any]] = []  # memory.jsonl rows, in order; an index is a notes_version
     progress = None
     totals = {
         "chips": sum(row["chip_delta"][MODEL] for row in previous),
@@ -163,14 +175,23 @@ def run_match(
     }
     start, session_hands = time.perf_counter(), 0
     try:
+        if memory is not None:
+            _rebuild_memory(out_dir, memory, previous, writer, player, identity, events)
         for deal in schedule:
             if deal.hand_number in done:
                 continue
             take_details = getattr(player, "take_hand_details", list)
             take_details()  # start the hand with an empty buffer
+            notes_version = len(events) - 1 if events else None
+            if memory is not None and hasattr(player, "notes"):
+                player.notes = memory.notes_block() or None
             record = play_hand(deal.seed, {MODEL: player, BOT: bot}, button=deal.button, hand_number=deal.hand_number)
             hand = {**identity, **hand_row(record), **_model_counts(record)}
-            writer.write_rows(_decision_rows(record, take_details(), identity), hand)
+            writer.write_rows(_decision_rows(record, take_details(), identity, notes_version), hand)
+            if memory is not None:
+                memory.observe(record)
+                if memory.due():
+                    _rewrite_notes(memory, player, writer, identity, events)
             done.add(deal.hand_number)
             session_hands += 1
             totals["chips"] += record.chip_delta[MODEL]
@@ -202,6 +223,60 @@ def run_match(
     return progress
 
 
+def _rebuild_memory(out_dir: Path, memory: MemoryState, previous: list[dict[str, Any]], writer: PokerRunWriter,
+                    player: Player, identity: dict[str, Any], events: list[dict[str, Any]]) -> None:
+    """On a resume, bring the match's memory back to where the logs stop, without the model.
+
+    The completed hands are re-observed in order; each rewrite that falls due is restored
+    from memory.jsonl. Only a rewrite due after the last logged hand may be missing (the
+    run stopped between that hand and its rewrite), and that one is made now. Any other
+    gap, or a rewrite logged with no hand that made it due, raises ValueError.
+    """
+    logged = writer.memory_rows()
+    rows_by_hand: dict[int, list[dict[str, Any]]] = {}
+    for row in writer.decision_rows():
+        rows_by_hand.setdefault(row["hand_number"], []).append(row)
+    for position, hand in enumerate(previous):
+        memory.observe(record_from_rows(hand, rows_by_hand.get(hand["hand_number"], [])))
+        if not memory.due():
+            continue
+        if len(events) < len(logged):
+            memory.restore(logged[len(events)])
+            events.append(logged[len(events)])
+        elif position == len(previous) - 1:
+            _rewrite_notes(memory, player, writer, identity, events)
+        else:
+            raise ValueError(f"cannot resume {out_dir}: memory.jsonl has no logged rewrite after hand {hand['hand_number']}")
+    if len(events) < len(logged):
+        raise ValueError(f"cannot resume {out_dir}: memory.jsonl has {len(logged)} rewrites, the hands make {len(events)} due")
+
+
+def _rewrite_notes(memory: MemoryState, player: Player, writer: PokerRunWriter, identity: dict[str, Any],
+                   events: list[dict[str, Any]]) -> None:
+    """Make the due rewrite with the player's model and log it to memory.jsonl.
+
+    A scripted stand-in has no rewrite_notes, so its rewrites get no reply: they are
+    logged as parse failures that keep the (empty) notes.
+    """
+    prompt = memory.rewrite_prompt()
+    rewrite = getattr(player, "rewrite_notes", None)
+    reply = rewrite(prompt) if rewrite is not None else None
+    event = memory.apply_rewrite(reply.content if reply is not None else None)
+    row = {
+        **identity,
+        "notes_version": len(events),
+        "rewrite_prompt": prompt,
+        **event.to_dict(),
+        "notes_block": memory.notes_block(),
+        "done_reason": reply.done_reason if reply is not None else None,
+        "eval_count": reply.eval_count if reply is not None else None,
+        "prompt_tokens": reply.prompt_eval_count if reply is not None else None,
+        "latency_s": round(reply.latency_s, 3) if reply is not None else None,
+    }
+    writer.write_memory(row)
+    events.append(row)
+
+
 def _model_counts(record) -> dict[str, int]:
     """The model's decision and fallback counts for one hand (on the hand row)."""
     mine = [decision for decision in record.decisions if decision.player == MODEL]
@@ -211,8 +286,8 @@ def _model_counts(record) -> dict[str, int]:
 def _load_or_new_metadata(out_dir: Path, spec: MatchSpec, seeds: list[int], extra: dict[str, Any]) -> dict[str, Any]:
     """The existing run's metadata (same run_id) when resuming, else a new run's.
 
-    A resume must match the run's model, setup, bot, base seed and prompt/parser
-    versions, and its model_digest when both runs have one (ValueError otherwise, as
+    A resume must match the run's model, setup, bot, base seed, prompt/parser
+    versions and memory settings, and its model_digest when both runs have one (ValueError otherwise, as
     scripts/run_baseline.py refuses). The pair count may grow: the seed list only appends.
     """
     path = out_dir / "metadata.json"
@@ -222,6 +297,7 @@ def _load_or_new_metadata(out_dir: Path, spec: MatchSpec, seeds: list[int], extr
     expected = {
         "model": spec.model, "setup": spec.setup.name, "setup_flags": spec.setup.flags(), "bot": spec.bot,
         "base_seed": spec.base_seed, "prompt_version": PROMPT_VERSION, "parser_version": PARSER_VERSION,
+        "memory": _memory_metadata(spec),
     }
     for key, value in expected.items():
         if metadata.get(key) != value:
@@ -234,11 +310,12 @@ def _load_or_new_metadata(out_dir: Path, spec: MatchSpec, seeds: list[int], extr
     return metadata
 
 
-def _decision_rows(record, details: list, identity: dict[str, Any]) -> list[dict[str, Any]]:
+def _decision_rows(record, details: list, identity: dict[str, Any],
+                   notes_version: Optional[int] = None) -> list[dict[str, Any]]:
     """The engine's decision rows with the run identity first and the LLM detail last.
 
     `details` are the model player's, one per model decision in order (none for a
-    scripted stand-in).
+    scripted stand-in). `notes_version` goes on the model's rows only.
     """
     model_decisions = sum(decision.player == MODEL for decision in record.decisions)
     if details and len(details) != model_decisions:
@@ -250,8 +327,13 @@ def _decision_rows(record, details: list, identity: dict[str, Any]) -> list[dict
         llm = {field: (getattr(detail, attribute) if detail else None) for field, attribute in LLM_FIELDS.items()}
         if llm["latency_s"] is not None:
             llm["latency_s"] = round(llm["latency_s"], 3)
-        rows.append({**identity, **row, **llm})
+        version = notes_version if decision.player == MODEL else None
+        rows.append({**identity, **row, **llm, "notes_version": version})
     return rows
+
+
+def _memory_metadata(spec: MatchSpec) -> Optional[dict[str, Any]]:
+    return memory_settings() if spec.setup.memory else None
 
 
 def _new_metadata(spec: MatchSpec, seeds: list[int]) -> dict[str, Any]:
@@ -269,6 +351,7 @@ def _new_metadata(spec: MatchSpec, seeds: list[int]) -> dict[str, Any]:
         "seeds": seeds,
         "prompt_version": PROMPT_VERSION,
         "parser_version": PARSER_VERSION,
+        "memory": _memory_metadata(spec),
         "pokerkit_version": importlib.metadata.version("pokerkit"),
         "git_commit": git_commit(),
         "started_at": _now_iso(),

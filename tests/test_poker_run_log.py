@@ -3,7 +3,7 @@
 import json
 
 from poker.engine import play_hand, play_match
-from poker.run_log import DECISION_FIELDS, HAND_FIELDS, PokerRunWriter, decision_rows, hand_row
+from poker.run_log import DECISION_FIELDS, HAND_FIELDS, PokerRunWriter, decision_rows, hand_row, record_from_rows
 
 
 class ScriptedPlayer:
@@ -101,3 +101,26 @@ def test_reopening_a_run_drops_a_partial_line_and_decisions_of_a_hand_that_never
 
     assert reopened.completed_hands() == {0}
     assert {row["hand_number"] for row in read_jsonl(tmp_path / "decisions.jsonl")} == {0}
+
+
+def test_a_hand_record_is_rebuilt_exactly_from_its_logged_hand_and_decision_rows():
+    # Raises, a clamp and a fallback, so every nested field has something in it.
+    record = play_hand(seed=3, players=heads_up(ScriptedPlayer(["raise_pot"] * 6), ScriptedPlayer(["raise_pot"] * 3 + ["bet"])),
+                       button="hero", hand_number=4)
+    hand = json.loads(json.dumps({"run_id": "r", **hand_row(record)}))
+    decisions = json.loads(json.dumps([{"run_id": "r", **row, "prompt": None} for row in decision_rows(record)]))
+
+    assert record_from_rows(hand, decisions) == record
+
+
+def test_memory_events_are_appended_to_memory_jsonl_and_a_partial_last_line_is_dropped_on_reopen(tmp_path):
+    writer = PokerRunWriter(tmp_path)
+    assert writer.memory_rows() == [] and not (tmp_path / "memory.jsonl").exists()
+    writer.write_memory({"notes_version": 0, "hand_number": 5})
+    with open(tmp_path / "memory.jsonl", "a", encoding="utf-8") as f:
+        f.write('{"notes_version": 1, "hand_nu')
+
+    reopened = PokerRunWriter(tmp_path)
+
+    assert reopened.memory_rows() == [{"notes_version": 0, "hand_number": 5}]
+    assert read_jsonl(tmp_path / "memory.jsonl") == [{"notes_version": 0, "hand_number": 5}]

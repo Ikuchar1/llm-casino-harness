@@ -70,9 +70,9 @@ def notes_block(notes: str) -> str:
 def build_user_prompt(state: DecisionState, notes: Optional[str] = None) -> str:
     """The decision prompt for one state: the current hand only.
 
-    MEMORY HOOK: `notes` is the opponent notes block (docs/poker-plan.md, "Memory"). It is
-    unused until memory is built; when given, notes_block(notes) is the only difference
-    from the prompt without notes. None or "" means no block.
+    `notes` is the memory setup's opponent notes block (docs/poker-plan.md, "Memory"):
+    when given, notes_block(notes) is the only difference from the prompt without notes.
+    None or "" means no block.
     """
     seat = (
         "You are on the button (small blind): you act first before the flop and last after it."

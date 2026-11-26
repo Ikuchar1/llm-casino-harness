@@ -9,6 +9,8 @@ import dataclasses
 import json
 import re
 
+import pytest
+
 from poker.bots import make_bot
 from poker.engine import play_duplicate, play_hand, play_match
 from poker.memory import (
@@ -602,3 +604,39 @@ def test_a_rewrite_that_does_not_parse_keeps_the_old_reads_re_verified_against_t
     assert event.old_notes == event.parsed_notes == [dataclasses.asdict(h) for h in kept.hypotheses]
     assert memory.notes == Notes((Hypothesis("plays every hand", *now, "preflop.vpip", CONFIRMED),))
     assert event.verified_notes == [dataclasses.asdict(h) for h in memory.notes.hypotheses]
+
+
+# ---------- Restoring on resume ----------
+
+
+def test_a_memory_rebuilt_from_the_same_hands_and_restored_from_the_logged_events_matches_the_original():
+    records = station_match()[:20]
+    reply = "never folds to bets | key faced_bet.continue | for 1 | against 0"
+    original, events = MemoryState("hero"), []
+    for record in records:
+        original.observe(record)
+        if original.due():
+            events.append(json.loads(original.apply_rewrite(reply).to_json()))
+
+    rebuilt, logged = MemoryState("hero"), iter(events)
+    for record in records:
+        rebuilt.observe(record)
+        if rebuilt.due():
+            rebuilt.restore(next(logged))
+
+    assert len(events) == 4
+    assert rebuilt.notes == original.notes and rebuilt.notes_block() == original.notes_block()
+    assert not rebuilt.due() and rebuilt.rewrite_prompt() == original.rewrite_prompt()
+
+
+def test_restoring_an_event_logged_at_a_different_number_of_committed_hands_is_refused():
+    memory = MemoryState("hero")
+    for record in station_match()[:6]:
+        memory.observe(record)
+    event = json.loads(memory.apply_rewrite("").to_json())
+    later = MemoryState("hero")
+    for record in station_match()[:8]:
+        later.observe(record)
+
+    with pytest.raises(ValueError, match="6 committed hands.*8"):
+        later.restore(event)

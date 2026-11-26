@@ -5,6 +5,7 @@ import pytest
 from agent.ollama_client import ChatReply
 from poker.engine import play_hand
 from poker.llm_player import SETUPS, PokerLLMPlayer
+from poker.memory import REWRITE_SYSTEM_PROMPT
 from poker.prompt import build_system_prompt, build_user_prompt
 from tests.test_poker_prompt import flop_state
 
@@ -71,9 +72,22 @@ def test_a_reply_cut_off_before_its_action_line_falls_back_and_is_marked_truncat
     assert (detail.parsed_action, detail.parse_status, detail.done_reason) == (None, "truncated_no_action", "length")
 
 
-def test_the_memory_setup_is_not_built_yet():
-    with pytest.raises(NotImplementedError, match="memory"):
-        PokerLLMPlayer(FakeChatClient([]), SETUPS["memory"])
+def test_the_memory_setup_builds_and_its_rewrite_goes_to_the_same_client_with_the_rewrite_system_prompt():
+    client = FakeChatClient(["folds a lot | key faced_bet.fold | for 9 | against 1"])
+    player = PokerLLMPlayer(client, SETUPS["memory"])
+
+    reply = player.rewrite_notes("Rewrite your notes ...")
+
+    assert client.calls == [(REWRITE_SYSTEM_PROMPT, "Rewrite your notes ...")]
+    assert (reply.content, reply.done_reason, reply.eval_count) == ("folds a lot | key faced_bet.fold | for 9 | against 1", "stop", 42)
+    assert player.take_hand_details() == []  # a rewrite is not a decision
+
+
+def test_a_setup_with_an_unbuilt_component_is_still_refused():
+    from agent.config import HarnessConfig
+
+    with pytest.raises(NotImplementedError, match="probability_tool"):
+        PokerLLMPlayer(FakeChatClient([]), HarnessConfig(name="tools", probability_tool=True))
 
 
 class OneActionPlayer:

@@ -3,6 +3,7 @@
 Files in the run directory, as in agent/run_log.py:
     decisions.jsonl  one row per decision
     hands.jsonl      one row per hand
+    memory.jsonl     one row per notes rewrite (memory setup only; never created otherwise)
 
 A hand counts as finished only once its row is in hands.jsonl. Reopening a run
 directory drops a half-written last line and the decision rows of any hand that
@@ -14,7 +15,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-from poker.engine import HandRecord
+from poker.engine import Action, Clamp, DecisionRecord, DecisionState, HandRecord, MenuItem
 
 # Every field a decision row must have, in order (tests check this list).
 DECISION_FIELDS = [
@@ -79,14 +80,57 @@ def hand_row(record: HandRecord) -> dict[str, Any]:
     }
 
 
+def record_from_rows(hand: dict[str, Any], decisions: list[dict[str, Any]]) -> HandRecord:
+    """The HandRecord a hand row and its decision rows were written from (extra row fields ignored)."""
+    return HandRecord(
+        seed=hand["seed"],
+        hand_number=hand["hand_number"],
+        button=hand["button"],
+        seats=dict(hand["seats"]),
+        hole_cards={name: list(cards) for name, cards in hand["hole_cards"].items()},
+        board=list(hand["board"]),
+        actions=[Action(**action) for action in hand["actions"]],
+        showdown=hand["showdown"],
+        chip_delta=dict(hand["chip_delta"]),
+        decisions=[_decision_from_row(row) for row in sorted(decisions, key=lambda row: row["decision_index"])],
+    )
+
+
+def _decision_from_row(row: dict[str, Any]) -> DecisionRecord:
+    state = DecisionState(
+        seat=row["seat"],
+        hole_cards=tuple(row["hole_cards"]),
+        board=tuple(row["board"]),
+        street=row["street"],
+        pot=row["pot"],
+        stack=row["stack"],
+        opponent_stack=row["opponent_stack"],
+        to_call=row["to_call"],
+        is_button=row["is_button"],
+        history=tuple(Action(**action) for action in row["history"]),
+        menu=tuple(MenuItem(**item) for item in row["menu"]),
+    )
+    return DecisionRecord(
+        player=row["player"],
+        state=state,
+        choice=row["choice"],
+        action=row["action"],
+        amount=row["amount"],
+        fallback=row["fallback"],
+        clamps=[Clamp(**clamp) for clamp in row["clamps"]],
+        clamped=row["clamped"],
+    )
+
+
 class PokerRunWriter:
-    """Appends rows to decisions.jsonl and hands.jsonl in one run directory."""
+    """Appends rows to decisions.jsonl, hands.jsonl and (memory runs) memory.jsonl in one run directory."""
 
     def __init__(self, out_dir: Path | str):
         self.out_dir = Path(out_dir)
         self.out_dir.mkdir(parents=True, exist_ok=True)
         self.decisions_path = self.out_dir / "decisions.jsonl"
         self.hands_path = self.out_dir / "hands.jsonl"
+        self.memory_path = self.out_dir / "memory.jsonl"
         self._clean_up_after_interruption()
 
     def completed_hands(self) -> set[int]:
@@ -111,12 +155,27 @@ class PokerRunWriter:
         """Every hand row written so far."""
         return _read_jsonl(self.hands_path)
 
+    def decision_rows(self) -> list[dict[str, Any]]:
+        """Every decision row written so far."""
+        return _read_jsonl(self.decisions_path)
+
+    def write_memory(self, row: dict[str, Any]) -> None:
+        """Append one notes rewrite (written after the hand it followed)."""
+        with open(self.memory_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(row) + "\n")
+            f.flush()
+
+    def memory_rows(self) -> list[dict[str, Any]]:
+        """Every notes rewrite written so far, in order."""
+        return _read_jsonl(self.memory_path)
+
     def _clean_up_after_interruption(self) -> None:
         hands = _read_jsonl(self.hands_path)
         _rewrite_jsonl(self.hands_path, hands)
         finished = {row["hand_number"] for row in hands}
         decisions = [row for row in _read_jsonl(self.decisions_path) if row.get("hand_number") in finished]
         _rewrite_jsonl(self.decisions_path, decisions)
+        _rewrite_jsonl(self.memory_path, _read_jsonl(self.memory_path))
 
 
 def _read_jsonl(path: Path) -> list[dict[str, Any]]:
