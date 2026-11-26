@@ -1,6 +1,14 @@
 """Poker match metrics, in the priority order of docs/research/poker-eval-methods.md.
 
-1. Per-bot habit metrics over the model's decisions, with Wilson 95% CIs.
+1. Per-bot habit metrics over the model's decisions, with Wilson 95% CIs
+   (EXPLOIT_TARGETS says which ones each bot gets and which way an exploit moves them).
+2. The trend within a match: each habit in the last window minus the first window,
+   with Newcombe's hybrid score interval.
+3. bb/100 over duplicate seed pairs (pair = hand_number // 2), mean ± 1.96 SE over
+   pairs, and a paired comparison of two runs dealt the same seeds.
+4. VPIP, PFR, AF and WTSD (descriptive).
+5. Fallback rate, with a breakdown by parse_status.
+6. Mean prompt tokens per decision, when the run logged them.
 
 Every metric counts only the model's decisions (player == "model"). Equity is
 Monte Carlo vs one random hand (poker.hands.equity_vs_random), seeded from a hash of
@@ -181,9 +189,8 @@ def trend_windows(n_hands: int, first_hands: int = FIRST_HANDS, last_hands: int 
     """
     if first_hands + last_hands <= n_hands:
         return first_hands, last_hands
-    scale = n_hands / (first_hands + last_hands)
-    first = int(first_hands * scale)
-    return first, int(last_hands * scale)
+    total = first_hands + last_hands
+    return first_hands * n_hands // total, last_hands * n_hands // total
 
 
 def habit_trends(rows: list[Row], bot: str, n_hands: int, first_hands: int = FIRST_HANDS,
@@ -256,6 +263,8 @@ class Profile:
     pfr: Proportion
     af: float
     wtsd: Proportion
+    postflop_bets_raises: int = 0  # AF's numerator
+    postflop_calls: int = 0  # AF's denominator
 
 
 def player_profile(decisions: list[Row], hands: list[Row]) -> Profile:
@@ -280,6 +289,8 @@ def player_profile(decisions: list[Row], hands: list[Row]) -> Profile:
         pfr=Proportion(pfr, len(preflop)),
         af=af,
         wtsd=Proportion(sum(bool(row["showdown"]) for row in saw_flop), len(saw_flop)),
+        postflop_bets_raises=postflop_aggressive,
+        postflop_calls=postflop_calls,
     )
 
 
@@ -380,3 +391,73 @@ def paired_bootstrap(differences: list[float], resamples: int = BOOTSTRAP_RESAMP
     below = sum(mean <= 0 for mean in means) / resamples
     above = sum(mean >= 0 for mean in means) / resamples
     return low, high, min(1.0, 2 * min(below, above))
+
+
+# JSON-ready summaries (scripts/analyze_poker.py) ------------------------------------
+
+
+def _number(value: Optional[float]) -> Optional[float]:
+    """nan and inf become None, so summary.json stays strict JSON."""
+    if value is None or math.isnan(value) or math.isinf(value):
+        return None
+    return value
+
+
+def _proportion(rate: Proportion) -> dict[str, Any]:
+    return {"k": rate.k, "n": rate.n, "rate": _number(rate.rate), "low": _number(rate.low), "high": _number(rate.high)}
+
+
+def _difference(diff: RateDifference) -> dict[str, Any]:
+    return {"before": _proportion(diff.before), "after": _proportion(diff.after),
+            "difference": _number(diff.difference), "low": _number(diff.low), "high": _number(diff.high)}
+
+
+def _mean(mean: MeanCI) -> dict[str, Any]:
+    return {"mean": _number(mean.mean), "low": _number(mean.low), "high": _number(mean.high), "n": mean.n}
+
+
+def summarize_run(run: Run, first_hands: int = FIRST_HANDS, last_hands: int = LAST_HANDS) -> dict[str, Any]:
+    """Every metric for one run, as plain JSON-ready values."""
+    bot = run.metadata.get("bot", "")
+    n_hands = max((row["hand_number"] for row in run.hands), default=-1) + 1
+    first, last = trend_windows(n_hands, first_hands, last_hands)
+    bb = bb_per_100(run.hands)
+    profile = player_profile(run.decisions, run.hands)
+    quality = output_quality(run.decisions)
+    return {
+        "run": run.name,
+        "run_id": run.run_id,
+        "model": run.metadata.get("model"),
+        "setup": run.metadata.get("setup"),
+        "bot": bot,
+        "hands": len(run.hands),
+        "pairs": len(bb.pair_bb100),
+        "habits": {name: {**_proportion(habit.rate), "target": habit.target}
+                   for name, habit in habit_metrics(run.decisions, bot).items()},
+        "trend": {"first_hands": first, "last_hands": last,
+                  "habits": {name: _difference(diff) for name, diff in
+                             habit_trends(run.decisions, bot, n_hands, first_hands, last_hands).items()}},
+        "bb_per_100": {**_mean(bb.mean), "pairs": len(bb.pair_bb100), "incomplete_pairs": bb.incomplete_pairs},
+        "profile": {"vpip": _proportion(profile.vpip), "pfr": _proportion(profile.pfr),
+                    "af": _number(profile.af), "af_bets_raises": profile.postflop_bets_raises,
+                    "af_calls": profile.postflop_calls, "wtsd": _proportion(profile.wtsd)},
+        "fallback": _proportion(quality.fallback),
+        "parse_status": quality.parse_status,
+        "prompt_tokens_mean": _number(mean_prompt_tokens(run.decisions)),
+    }
+
+
+def summarize_comparison(comparison: RunComparison) -> dict[str, Any]:
+    """A paired comparison as plain JSON-ready values (B - A)."""
+    return {
+        "a": comparison.a,
+        "b": comparison.b,
+        "pairs": len(comparison.pair_differences),
+        "unmatched_pairs": comparison.unmatched_pairs,
+        "bb_per_100_difference": _mean(comparison.difference),
+        "bootstrap_low": _number(comparison.bootstrap_low),
+        "bootstrap_high": _number(comparison.bootstrap_high),
+        "bootstrap_p": _number(comparison.bootstrap_p),
+        "habits": {name: _difference(diff) for name, diff in comparison.habits.items()},
+        "pair_differences": {str(pair): value for pair, value in comparison.pair_differences.items()},
+    }
