@@ -215,3 +215,52 @@ def test_runs_dealt_different_seeds_are_refused_for_a_paired_comparison():
 
     with pytest.raises(pm.PairingError, match="seed"):
         pm.compare_runs(plain, memory)
+
+
+FLOP = ["Ks", "8c", "4d"]
+
+
+def test_the_models_profile_has_vpip_pfr_af_and_wtsd():
+    decisions = [
+        decision(PREFLOP, "call", to_call=1, hand_number=0),  # limp: voluntary, not a raise
+        decision(PREFLOP, "raise_pot", to_call=1, hand_number=1),
+        decision(PREFLOP, "fold", to_call=1, hand_number=2),
+        decision(PREFLOP, "check", seat="big_blind", hand_number=3, history=[LIMP]),  # free check: not voluntary
+        decision(PREFLOP, "raise_pot", to_call=1, hand_number=3, player="bot"),
+        decision(TOP_PAIR_FLOP, "raise_pot", hand_number=0),  # postflop: 2 bets/raises, 1 call -> AF 2
+        decision(TOP_PAIR_FLOP, "all_in", to_call=4, hand_number=1),
+        decision(TOP_PAIR_FLOP, "call", to_call=4, hand_number=3),
+        decision(TOP_PAIR_FLOP, "check", hand_number=3),
+    ]
+    hands = [hand(0, 5, showdown=True, board=FLOP + ["2h", "3s"]), hand(1, 8, board=FLOP), hand(2, -1),
+             hand(3, -4, showdown=True, board=FLOP + ["2h", "3s"])]
+
+    profile = pm.player_profile(decisions, hands)
+
+    assert (profile.vpip.k, profile.vpip.n) == (2, 4)
+    assert (profile.pfr.k, profile.pfr.n) == (1, 4)
+    assert profile.af == pytest.approx(2.0)
+    assert (profile.wtsd.k, profile.wtsd.n) == (2, 3)  # hand 2 never saw a flop
+
+
+def test_the_fallback_rate_counts_the_models_fallbacks_with_a_breakdown_by_parse_status():
+    rows = [
+        decision(fallback=True, parse_status="unreadable"),
+        decision(parse_status="ok"),
+        decision(parse_status="ok"),
+        decision(fallback=True, parse_status="illegal"),
+        decision(fallback=True, player="bot"),
+    ]
+
+    output = pm.output_quality(rows)
+
+    assert (output.fallback.k, output.fallback.n) == (2, 4)
+    assert output.parse_status == {"ok": 2, "unreadable": 1, "illegal": 1}
+
+
+def test_prompt_tokens_per_decision_is_the_mean_over_the_models_logged_counts_and_none_when_never_logged():
+    logged = [decision(prompt_tokens=300), decision(prompt_tokens=500), decision(prompt_tokens=None),
+              decision(prompt_tokens=9999, player="bot")]
+
+    assert pm.mean_prompt_tokens(logged) == pytest.approx(400)
+    assert pm.mean_prompt_tokens([decision(), decision(prompt_tokens=None)]) is None

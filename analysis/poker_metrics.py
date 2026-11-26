@@ -10,14 +10,15 @@ the cards so the same spot always gets the same number.
 import hashlib
 import math
 import random
+from collections import Counter
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any, Callable, Optional
 
-from analysis.loading import Run
+from analysis.loading import NOT_LOGGED, Run
 from analysis.paired import PairingError
 from analysis.stats import MeanCI, Proportion, mean_with_ci
-from poker.engine import ALL_IN, BIG_BLIND, FOLD, MIN_RAISE, RAISE_HALF_POT, RAISE_POT, RAISE_TWO_THIRDS_POT
+from poker.engine import ALL_IN, BIG_BLIND, CALL, FOLD, MIN_RAISE, RAISE_HALF_POT, RAISE_POT, RAISE_TWO_THIRDS_POT
 from poker.hands import equity_vs_random
 
 Row = dict[str, Any]
@@ -234,6 +235,82 @@ class BbPer100:
 def bb_per_100(hands: list[Row]) -> BbPer100:
     results, incomplete = pair_bb100(hands)
     return BbPer100(results, incomplete, mean_with_ci(list(results.values())))
+
+
+# 4. Descriptive profile: VPIP, PFR, AF, WTSD ---------------------------------------
+
+
+@dataclass(frozen=True)
+class Profile:
+    """The model's playing style (descriptive, no test).
+
+    vpip: hands where it put chips in voluntarily preflop (called or raised; the big
+          blind's free check doesn't count), out of hands where it had a preflop decision.
+    pfr:  hands where it raised preflop, same denominator.
+    af:   aggression factor, postflop bets and raises / postflop calls (inf with no
+          calls, nan with neither).
+    wtsd: hands that reached showdown, out of hands that saw a flop.
+    """
+
+    vpip: Proportion
+    pfr: Proportion
+    af: float
+    wtsd: Proportion
+
+
+def player_profile(decisions: list[Row], hands: list[Row]) -> Profile:
+    preflop: dict[int, list[str]] = {}
+    postflop_aggressive = postflop_calls = 0
+    for row in _model(decisions):
+        if row["street"] == "preflop":
+            preflop.setdefault(row["hand_number"], []).append(row["action"])
+        elif _is_aggressive(row):
+            postflop_aggressive += 1
+        elif row["action"] == CALL:
+            postflop_calls += 1
+    vpip = sum(any(action == CALL or action in AGGRESSIVE for action in actions) for actions in preflop.values())
+    pfr = sum(any(action in AGGRESSIVE for action in actions) for actions in preflop.values())
+    if postflop_calls:
+        af = postflop_aggressive / postflop_calls
+    else:
+        af = math.inf if postflop_aggressive else math.nan
+    saw_flop = [row for row in hands if len(row["board"]) >= 3]
+    return Profile(
+        vpip=Proportion(vpip, len(preflop)),
+        pfr=Proportion(pfr, len(preflop)),
+        af=af,
+        wtsd=Proportion(sum(bool(row["showdown"]) for row in saw_flop), len(saw_flop)),
+    )
+
+
+# 5. Fallbacks and parse status ------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class OutputQuality:
+    """fallback: the model's decisions that fell back to check or fold (decision 12).
+    parse_status: model decisions per parser status ("not logged" for scripted players)."""
+
+    fallback: Proportion
+    parse_status: dict[str, int]
+
+
+def output_quality(rows: list[Row]) -> OutputQuality:
+    mine = _model(rows)
+    return OutputQuality(
+        fallback=Proportion(sum(bool(row["fallback"]) for row in mine), len(mine)),
+        parse_status=dict(Counter(row.get("parse_status") or NOT_LOGGED for row in mine)),
+    )
+
+
+# 6. Prompt length --------------------------------------------------------------------
+
+
+def mean_prompt_tokens(rows: list[Row]) -> Optional[float]:
+    """Mean prompt_tokens over the model's decisions that logged it; None if none did
+    (scripted players, or runs from before the column existed)."""
+    counts = [row["prompt_tokens"] for row in _model(rows) if row.get("prompt_tokens") is not None]
+    return sum(counts) / len(counts) if counts else None
 
 
 # Paired comparison of two runs on the same seeds ------------------------------------
