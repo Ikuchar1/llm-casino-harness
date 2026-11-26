@@ -261,3 +261,67 @@ def _fit_word_budget(hypotheses: list[Hypothesis]) -> tuple[list[Hypothesis], bo
         kept.append(hypothesis)
         left -= len(words)
     return kept, False
+
+
+# ---------- Harness-side verification and status ----------
+
+OPPORTUNITY_KEYS = (
+    "preflop.vpip",
+    "preflop.no_vpip",
+    "preflop.raise",
+    "preflop.no_raise",
+    *(f"faced_bet.{outcome}" for outcome in FACED_BET_OUTCOMES),
+    *(f"faced_bet.{outcome}.{street}" for outcome in FACED_BET_OUTCOMES for street in STREETS),
+    *(f"checked_to.{outcome}" for outcome in CHECKED_TO_OUTCOMES),
+    *(f"checked_to.{outcome}.{street}" for outcome in CHECKED_TO_OUTCOMES for street in POSTFLOP_STREETS),
+    "showdown.reached",
+)
+
+
+# Status gates (docs/poker-plan.md, "Memory"). A hypothesis is CONFIRMED when its supporting
+# count is at least the threshold for its kind of opportunity AND against <= MAX_AGAINST_SHARE x for;
+# otherwise TENTATIVE. Facing-a-bet and no-bet-to-face reads use LEAK_THRESHOLD opportunities
+# (the extreme leak bots); preflop and showdown reads are per hand and use HAND_FREQUENCY_THRESHOLD.
+LEAK_THRESHOLD = 8
+HAND_FREQUENCY_THRESHOLD = 20
+MAX_AGAINST_SHARE = 0.2
+_HAND_FREQUENCY_FAMILIES = ("preflop", "showdown")
+
+
+def status_for(opportunity_key: str, for_count: int, against_count: int) -> str:
+    """CONFIRMED or TENTATIVE for a hypothesis citing this key with these true counts."""
+    family = opportunity_key.split(".")[0]
+    threshold = HAND_FREQUENCY_THRESHOLD if family in _HAND_FREQUENCY_FAMILIES else LEAK_THRESHOLD
+    if for_count >= threshold and against_count <= MAX_AGAINST_SHARE * for_count:
+        return CONFIRMED
+    return TENTATIVE
+
+
+@dataclass
+class VerifyResult:
+    notes: Notes  # with the tally's true counts and the harness-set status
+    count_mismatches: list[dict[str, Any]]  # cited counts the harness replaced
+    unverifiable: list[str]  # texts of hypotheses whose key is not in OPPORTUNITY_KEYS
+
+
+def verify(notes: Notes, tally: OpponentTally) -> VerifyResult:
+    """Check every cited count against the tally, correcting mismatches, and set each status."""
+    checked: list[Hypothesis] = []
+    mismatches: list[dict[str, Any]] = []
+    unverifiable: list[str] = []
+    for hypothesis in notes.hypotheses:
+        if hypothesis.opportunity_key not in OPPORTUNITY_KEYS:
+            unverifiable.append(hypothesis.text)
+            checked.append(dataclasses.replace(hypothesis, status=TENTATIVE))
+            continue
+        true_for, true_against = tally.counts(hypothesis.opportunity_key)
+        if (hypothesis.for_count, hypothesis.against_count) != (true_for, true_against):
+            mismatches.append({
+                "text": hypothesis.text, "opportunity_key": hypothesis.opportunity_key,
+                "cited": [hypothesis.for_count, hypothesis.against_count], "tally": [true_for, true_against],
+            })
+        checked.append(dataclasses.replace(
+            hypothesis, for_count=true_for, against_count=true_against,
+            status=status_for(hypothesis.opportunity_key, true_for, true_against),
+        ))
+    return VerifyResult(Notes(tuple(checked)), mismatches, unverifiable)

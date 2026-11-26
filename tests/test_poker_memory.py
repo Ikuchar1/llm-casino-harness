@@ -8,7 +8,14 @@ is real engine output. The model is always "hero"; the opponent is "villain".
 from poker.bots import make_bot
 from poker.engine import play_hand, play_match
 from poker.runner import match_seeds
-from poker.memory import CONFIRMED, TENTATIVE, WORD_BUDGET, Hypothesis, Notes, OpponentTally, parse_line, parse_rewrite
+from poker.memory import (
+    CONFIRMED,
+    HAND_FREQUENCY_THRESHOLD,
+    LEAK_THRESHOLD,
+    MAX_AGAINST_SHARE,
+    TENTATIVE,
+    WORD_BUDGET, Hypothesis, Notes, OpponentTally, parse_line, parse_rewrite, status_for, verify,
+)
 
 
 class ScriptedPlayer:
@@ -202,3 +209,91 @@ def test_notes_within_the_word_budget_are_not_marked_truncated():
     result = parse_rewrite("never folds | key faced_bet.continue | for 9 | against 0", PREVIOUS)
 
     assert not result.truncated
+
+
+# ---------- Harness-side verification and status ----------
+
+
+def station_tally():
+    """A tally where the calling station faced plenty of bets and never folded."""
+    return tally_of(*play_match(match_seeds(7, 20), {"hero": Aggressor(), "villain": make_bot("calling_station")}))
+
+
+def test_a_cited_count_that_does_not_match_the_tally_is_replaced_by_the_true_count_and_logged():
+    tally = station_tally()
+    true_for, true_against = tally.counts("faced_bet.continue")
+    claimed = Notes((Hypothesis("never folds to bets", 3, 2, "faced_bet.continue"),))
+
+    result = verify(claimed, tally)
+
+    hypothesis = result.notes.hypotheses[0]
+    assert (hypothesis.for_count, hypothesis.against_count) == (true_for, true_against)
+    assert result.count_mismatches == [{
+        "text": "never folds to bets", "opportunity_key": "faced_bet.continue",
+        "cited": [3, 2], "tally": [true_for, true_against],
+    }]
+
+
+def test_a_cited_count_that_matches_the_tally_is_kept_and_not_logged_as_a_mismatch():
+    tally = station_tally()
+    true_for, true_against = tally.counts("faced_bet.continue")
+    claimed = Notes((Hypothesis("never folds to bets", true_for, true_against, "faced_bet.continue"),))
+
+    result = verify(claimed, tally)
+
+    assert result.count_mismatches == []
+    assert result.notes.hypotheses[0].for_count == true_for
+
+
+def test_a_hypothesis_with_an_unknown_or_missing_key_is_kept_as_tentative_with_its_counts_and_logged_unverifiable():
+    claimed = Notes((
+        Hypothesis("bluffs rivers", 30, 0, "river.bluff", CONFIRMED),
+        Hypothesis("tilts after losing", 25, 1, None, CONFIRMED),
+    ))
+
+    result = verify(claimed, station_tally())
+
+    assert result.notes == Notes((
+        Hypothesis("bluffs rivers", 30, 0, "river.bluff", TENTATIVE),
+        Hypothesis("tilts after losing", 25, 1, None, TENTATIVE),
+    ))
+    assert result.unverifiable == ["bluffs rivers", "tilts after losing"]
+    assert result.count_mismatches == []
+
+
+def test_a_facing_a_bet_or_no_bet_to_face_read_is_confirmed_from_the_leak_threshold_of_opportunities():
+    assert LEAK_THRESHOLD == 8
+    assert status_for("faced_bet.continue", 7, 0) == TENTATIVE
+    assert status_for("faced_bet.continue", 8, 0) == CONFIRMED
+    assert status_for("faced_bet.fold.river", 8, 0) == CONFIRMED
+    assert status_for("checked_to.bet", 7, 0) == TENTATIVE
+    assert status_for("checked_to.bet.flop", 9, 0) == CONFIRMED
+
+
+def test_a_hand_frequency_read_needs_the_hand_threshold_before_it_is_confirmed():
+    assert HAND_FREQUENCY_THRESHOLD == 20
+    assert status_for("preflop.vpip", 19, 0) == TENTATIVE
+    assert status_for("preflop.vpip", 20, 0) == CONFIRMED
+    assert status_for("preflop.no_raise", 8, 0) == TENTATIVE
+    assert status_for("showdown.reached", 19, 0) == TENTATIVE
+
+
+def test_a_read_is_confirmed_only_while_against_is_at_most_a_fifth_of_for():
+    assert MAX_AGAINST_SHARE == 0.2
+    assert status_for("faced_bet.continue", 10, 2) == CONFIRMED
+    assert status_for("faced_bet.continue", 10, 3) == TENTATIVE
+    assert status_for("preflop.vpip", 25, 5) == CONFIRMED
+    assert status_for("preflop.vpip", 25, 6) == TENTATIVE
+
+
+def test_the_harness_sets_status_from_the_tally_whatever_status_the_model_wrote():
+    tally = station_tally()
+    folds = tally.counts("faced_bet.fold")
+    claimed = Notes((
+        Hypothesis("never folds to bets", *tally.counts("faced_bet.continue"), "faced_bet.continue", TENTATIVE),
+        Hypothesis("folds to bets", *folds, "faced_bet.fold", CONFIRMED),
+    ))
+
+    statuses = [h.status for h in verify(claimed, tally).notes.hypotheses]
+
+    assert statuses == [CONFIRMED, TENTATIVE]
