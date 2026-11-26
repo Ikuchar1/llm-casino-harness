@@ -105,8 +105,9 @@ class PokerLLMPlayer:
             # flags() is a logged-only diagnostic: the re-check stays generic (CONTEXT.md).
             warnings = flags(state, result.action, info)
             self_check, second = self._re_check(state, user_prompt, reply.content, result, choice)
-            if second.action is not None:
-                result, choice = second, second.action
+            second_choice = _usable(second, state)
+            if second_choice is not None:
+                result, choice = second, second_choice
         self._details.append(PokerDecisionDetail(
             user_prompt=user_prompt,
             raw_response=reply.content,
@@ -137,7 +138,7 @@ class PokerLLMPlayer:
         ]
         reply = self.client.chat_messages(messages)
         second = parse_choice(reply.content, state.menu, reply.done_reason)
-        final = final_choice(first_choice, second.action)
+        final = final_choice(first_choice, _usable(second, state))
         log = {
             "first_action": first.action,
             "first_parse_status": first.status,
@@ -194,3 +195,13 @@ class PokerLLMPlayer:
         """Return the details collected since the last call, and clear them."""
         details, self._details = self._details, []
         return details
+
+
+def _usable(result: ParseResult, state: DecisionState) -> Optional[str]:
+    """The reply's choice if the engine would apply it without a fallback (DecisionState.applied_action), else None.
+
+    That is its menu action, or an off-menu name the engine still applies, such as a raise
+    when no raise is legal (applied as the clamped call).
+    """
+    choice = result.action if result.action is not None else result.named
+    return choice if state.applied_action(choice) is not None else None

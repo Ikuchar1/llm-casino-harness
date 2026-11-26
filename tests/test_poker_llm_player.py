@@ -211,3 +211,20 @@ def test_the_tools_setups_record_the_tool_versions_and_the_re_check_texts_in_the
     assert metadata["recheck_prompts"] == {"valid": recheck_prompt("<first action>"), "invalid": RECHECK_PROMPT_INVALID}
     assert set(PokerLLMPlayer(FakeChatClient([]), SETUPS["memory"]).run_metadata()) == {
         "system_prompt", "prompt_version", "parser_version"}
+
+
+def facing_a_shove(replies):
+    """The model in the big blind facing the button's all-in (menu fold / call); returns its decision and detail."""
+    player = PokerLLMPlayer(FakeChatClient(replies), SETUPS["tools"])
+    record = play_hand(seed=1, players={"model": player, "bot": OneActionPlayer("all_in")}, button="bot")
+    decision, = [d for d in record.decisions if d.player == "model"]
+    detail, = player.take_hand_details()
+    return decision, detail
+
+
+def test_a_re_check_naming_a_raise_the_engine_applies_as_the_call_is_played_and_counts_as_a_flip():
+    decision, detail = facing_a_shove(["ACTION: fold", "On reflection I shove.\nACTION: all_in"])
+
+    assert [item.action for item in decision.state.menu] == ["fold", "call"]
+    assert (decision.choice, decision.action, decision.fallback, decision.clamped) == ("all_in", "call", False, True)
+    assert (detail.self_check["final_action"], detail.self_check["flipped"]) == ("all_in", True)
