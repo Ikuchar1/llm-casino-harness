@@ -8,6 +8,7 @@ the engine adds the bot-only sizes to their menu: one fixed bet size, 2/3 pot
 
 from typing import Optional
 
+from poker.cards import RANKS
 from poker.engine import CALL, CHECK, FOLD, MIN_RAISE, RAISE_TWO_THIRDS_POT, DecisionState
 
 
@@ -43,6 +44,29 @@ class Maniac(_Bot):
         return MIN_RAISE if state.to_call else RAISE_TWO_THIRDS_POT
 
 
+class Rock(_Bot):
+    """Plays only premium hands preflop and only top pair or better after the flop."""
+
+    name = "rock"
+
+    def decide(self, state: DecisionState) -> Optional[str]:
+        if _is_premium(state.hole_cards):
+            return _bet_or_call(state)
+        return _check_or_fold(state)
+
+
+# Preflop premium range: TT+ and AQ+ (AQs, AQo, AKs, AKo).
+_PREMIUM_PAIR_MIN = "T"
+_PREMIUM_ACE_KICKERS = ("Q", "K")
+
+
+def _is_premium(hole_cards: tuple[str, ...]) -> bool:
+    high, low = sorted((card[0] for card in hole_cards), key=RANKS.index, reverse=True)
+    if high == low:
+        return RANKS.index(high) >= RANKS.index(_PREMIUM_PAIR_MIN)
+    return high == "A" and low in _PREMIUM_ACE_KICKERS
+
+
 RAISE_CAP = 3
 _CALM_ACTIONS = (FOLD, CHECK, CALL)
 
@@ -60,7 +84,16 @@ def _check_or_call(state: DecisionState) -> str:
     return CALL if state.to_call else CHECK
 
 
-BOTS = {bot.name: bot for bot in (CallingStation, Maniac)}
+def _bet_or_call(state: DecisionState) -> str:
+    """Bet or raise the fixed 2/3 pot, or check or call when raising is not legal."""
+    return RAISE_TWO_THIRDS_POT if _can_raise(state) else _check_or_call(state)
+
+
+def _check_or_fold(state: DecisionState) -> str:
+    return FOLD if state.to_call else CHECK
+
+
+BOTS = {bot.name: bot for bot in (CallingStation, Maniac, Rock)}
 
 
 def make_bot(name: str) -> _Bot:

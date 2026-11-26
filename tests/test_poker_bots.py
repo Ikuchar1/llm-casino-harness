@@ -100,3 +100,14 @@ def test_the_maniacs_raise_cap_counts_only_this_streets_raises():
 
 def test_the_maniac_calls_an_all_in_because_it_cannot_raise():
     assert make_bot("maniac").decide(state(to_call=198, menu=FACING_ALL_IN)) == "call"
+
+
+# ---------- Rock ----------
+
+
+def test_the_rock_folds_ace_jack_offsuit_preflop():
+    assert make_bot("rock").decide(state(hole_cards=("Ah", "Jc"), to_call=1)) == "fold"
+
+
+def test_the_rock_raises_queens_two_thirds_pot_preflop():
+    assert make_bot("rock").decide(state(hole_cards=("Qh", "Qc"), to_call=1)) == "raise_two_thirds_pot"
