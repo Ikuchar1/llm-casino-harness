@@ -8,7 +8,8 @@ Usage (from the repo root):
 Each seed is dealt twice (model on the button, then the bot), so --pairs N plays 2N
 hands. --player random|station swaps the LLM for a scripted player (no Ollama needed),
 for testing. Re-running with the same --out resumes the same run, even halfway
-through a pair; model, setup, bot and seed must match.
+through a pair; model, setup, bot, seed and the model's digest must match (exit 2
+otherwise). Each session records the platform it ran on.
 
 Writes <out>/decisions.jsonl, hands.jsonl and metadata.json.
 """
@@ -113,7 +114,8 @@ def ollama_metadata(model: str) -> dict[str, Any]:
 def main() -> int:
     args = parse_args()
     setup = SETUPS[args.setup]
-    extra: dict[str, Any] = {"player": args.player, "python_version": platform.python_version(), **platform_info()}
+    where = platform_info()  # also kept per session: a resumed job may land on another node
+    extra: dict[str, Any] = {"player": args.player, "python_version": platform.python_version(), **where}
     if args.player == "llm":
         model = args.model
         try:  # before anything is written, so an unbuilt setup leaves no run folder behind
@@ -135,8 +137,9 @@ def main() -> int:
     print(f"Poker match {model} ({setup.name}) vs {args.bot}, seed {args.seed}, "
           f"{args.pairs} pairs ({2 * args.pairs} hands) -> {out_dir}", flush=True)
     try:
-        run_match(out_dir, spec, player, bots=BOT_REGISTRY, extra_metadata=extra, on_hand=print_progress)
-    except ValueError as error:  # unknown bot, or a resume that doesn't match the run
+        run_match(out_dir, spec, player, bots=BOT_REGISTRY, extra_metadata=extra, on_hand=print_progress,
+                  session_metadata=where)
+    except ValueError as error:  # unknown bot, or a resume that doesn't match the run (incl. a new model digest)
         print(f"ERROR: {error}", file=sys.stderr)
         return 2
     except OllamaUnavailableError as error:

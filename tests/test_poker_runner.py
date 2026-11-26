@@ -159,3 +159,33 @@ def test_resuming_with_a_different_model_bot_seed_or_setup_is_refused_before_any
         run_match(out, spec(n_pairs=2, **change), CheckCallPlayer(), bots={"scripted": CheckCallPlayer, "other": CheckCallPlayer})
     assert (out / "hands.jsonl").read_text() == before
     assert len(json.loads((out / "metadata.json").read_text())["sessions"]) == 1
+
+
+def ollama_facts(digest, version="0.9.0"):
+    return {"model_digest": digest, "ollama_version": version}
+
+
+def test_resuming_after_the_model_digest_changed_is_refused_before_anything_is_played(tmp_path):
+    out = tmp_path / "run"
+    run_match(out, spec(n_pairs=1), CheckCallPlayer(), bots={"scripted": CheckCallPlayer},
+              extra_metadata=ollama_facts("sha256:old"))
+    before = (out / "hands.jsonl").read_text()
+
+    with pytest.raises(ValueError, match="cannot resume.*model_digest"):
+        run_match(out, spec(n_pairs=2), CheckCallPlayer(), bots={"scripted": CheckCallPlayer},
+                  extra_metadata=ollama_facts("sha256:new"))
+    assert (out / "hands.jsonl").read_text() == before
+    assert len(json.loads((out / "metadata.json").read_text())["sessions"]) == 1
+
+
+def test_a_resume_keeps_the_original_model_digest_and_ollama_version_and_records_each_sessions_platform(tmp_path):
+    out = tmp_path / "run"
+    run_match(out, spec(n_pairs=1), CheckCallPlayer(), bots={"scripted": CheckCallPlayer},
+              extra_metadata=ollama_facts("sha256:same", "0.9.0"), session_metadata={"hostname": "mac"})
+    run_match(out, spec(n_pairs=2), CheckCallPlayer(), bots={"scripted": CheckCallPlayer},
+              extra_metadata=ollama_facts("sha256:same", "0.9.1"), session_metadata={"hostname": "hcc-node"})
+
+    metadata = json.loads((out / "metadata.json").read_text())
+    assert (metadata["model_digest"], metadata["ollama_version"]) == ("sha256:same", "0.9.0")
+    assert [session["hostname"] for session in metadata["sessions"]] == ["mac", "hcc-node"]
+    assert all(session["status"] == "completed" for session in metadata["sessions"])

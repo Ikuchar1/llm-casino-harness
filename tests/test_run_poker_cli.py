@@ -119,3 +119,38 @@ def test_an_uninstalled_model_exits_1(tmp_path, monkeypatch):
 
     assert module.main() == 1
     assert not out.exists()
+
+
+def run_llm_cli(monkeypatch, out, digest, version="0.9.0", hostname="mac"):
+    module = load_script()
+    monkeypatch.setattr(module, "OllamaClient", FakeOllama)
+    monkeypatch.setattr(module, "get_model_digest", lambda model: digest)
+    monkeypatch.setattr(module, "get_ollama_version", lambda: version)
+    monkeypatch.setattr(module, "platform_info", lambda: {"hostname": hostname, "gpus": None})
+    monkeypatch.setattr(module, "BOT_REGISTRY", {"scripted": CheckCallBot})
+    monkeypatch.setattr(sys, "argv", ["run_poker.py", "--model", "fake:1b", "--bot", "scripted", "--pairs", "1",
+                                      "--seed", "5", "--out", str(out)])
+    return module.main()
+
+
+def test_a_resume_after_the_model_digest_changed_exits_2_and_plays_nothing(tmp_path, monkeypatch, capsys):
+    out = tmp_path / "run"
+    assert run_llm_cli(monkeypatch, out, "sha256:old") == 0
+    before = (out / "hands.jsonl").read_text()
+
+    assert run_llm_cli(monkeypatch, out, "sha256:new") == 2
+
+    assert "model_digest" in capsys.readouterr().err
+    assert (out / "hands.jsonl").read_text() == before
+    metadata = json.loads((out / "metadata.json").read_text())
+    assert metadata["model_digest"] == "sha256:old" and len(metadata["sessions"]) == 1
+
+
+def test_each_session_records_where_it_ran_and_a_resume_keeps_the_first_digest_and_ollama_version(tmp_path, monkeypatch):
+    out = tmp_path / "run"
+    assert run_llm_cli(monkeypatch, out, "sha256:abc", "0.9.0", "mac") == 0
+    assert run_llm_cli(monkeypatch, out, "sha256:abc", "0.9.1", "hcc-node") == 0
+
+    metadata = json.loads((out / "metadata.json").read_text())
+    assert (metadata["model_digest"], metadata["ollama_version"]) == ("sha256:abc", "0.9.0")
+    assert [session["hostname"] for session in metadata["sessions"]] == ["mac", "hcc-node"]

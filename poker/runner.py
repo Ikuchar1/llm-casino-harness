@@ -39,6 +39,9 @@ LLM_FIELDS = {
     "latency_s": "latency_s",
 }
 
+# Run facts a resume never overwrites: the weights and server the run started with.
+KEPT_ON_RESUME = ("model_digest", "ollama_version")
+
 # Player names in the logs (seats swap every hand; these names don't).
 MODEL = "model"
 BOT = "bot"
@@ -122,22 +125,28 @@ def run_match(
     bots: Optional[Mapping[str, Callable[[], Player]]] = None,
     extra_metadata: Optional[dict[str, Any]] = None,
     on_hand: Optional[Callable[[Progress], None]] = None,
+    session_metadata: Optional[dict[str, Any]] = None,
 ) -> Optional[Progress]:
     """Play every deal of the match that isn't in out_dir's hands.jsonl yet, logging each hand.
 
     metadata.json is created on the first call; a later call on the same directory
-    resumes the same run (same run_id) and adds a session. Errors from the player (e.g.
+    resumes the same run (same run_id) and adds a session, which records session_metadata
+    (e.g. platform_info(): a resumed job may land on another node). A resume keeps the
+    run's first model_digest and ollama_version (KEPT_ON_RESUME). Errors from the player (e.g.
     Ollama down) propagate after the session is marked; the interrupted hand is not
     written, so the next call replays just that deal, even halfway through a pair.
     """
     out_dir = Path(out_dir)
     bot = resolve_bot(spec.bot, bots)
     seeds = match_seeds(spec.base_seed, spec.n_pairs)
-    metadata = _load_or_new_metadata(out_dir, spec, seeds)
+    extra_metadata = extra_metadata or {}
+    metadata = _load_or_new_metadata(out_dir, spec, seeds, extra_metadata)
     writer = PokerRunWriter(out_dir)
     metadata.update(getattr(player, "run_metadata", dict)())
-    metadata.update(extra_metadata or {})
-    session: dict[str, Any] = {"started_at": _now_iso(), "ended_at": None, "status": "running"}
+    metadata.update({key: value for key, value in extra_metadata.items()
+                     if not (key in KEPT_ON_RESUME and key in metadata)})
+    session: dict[str, Any] = {"started_at": _now_iso(), "ended_at": None, "status": "running",
+                               **(session_metadata or {})}
     metadata["sessions"].append(session)
     _save(out_dir, metadata)
     identity = {key: metadata[key] for key in ("run_id", "model", "setup", "bot")}
@@ -198,11 +207,12 @@ def _model_counts(record) -> dict[str, int]:
     return {"num_model_decisions": len(mine), "num_model_fallbacks": sum(decision.fallback for decision in mine)}
 
 
-def _load_or_new_metadata(out_dir: Path, spec: MatchSpec, seeds: list[int]) -> dict[str, Any]:
+def _load_or_new_metadata(out_dir: Path, spec: MatchSpec, seeds: list[int], extra: dict[str, Any]) -> dict[str, Any]:
     """The existing run's metadata (same run_id) when resuming, else a new run's.
 
     A resume must match the run's model, setup, bot, base seed and prompt/parser
-    versions (ValueError otherwise). The pair count may grow: the seed list only appends.
+    versions, and its model_digest when both runs have one (ValueError otherwise, as
+    scripts/run_baseline.py refuses). The pair count may grow: the seed list only appends.
     """
     path = out_dir / "metadata.json"
     if not path.exists():
@@ -215,6 +225,9 @@ def _load_or_new_metadata(out_dir: Path, spec: MatchSpec, seeds: list[int]) -> d
     for key, value in expected.items():
         if metadata.get(key) != value:
             raise ValueError(f"cannot resume {out_dir}: it was run with {key}={metadata.get(key)!r}, not {value!r}")
+    stored, digest = metadata.get("model_digest"), extra.get("model_digest")
+    if stored is not None and digest is not None and stored != digest:
+        raise ValueError(f"cannot resume {out_dir}: model_digest changed since this run started ({stored} -> {digest})")
     metadata.update({"n_pairs": spec.n_pairs, "n_hands": 2 * spec.n_pairs, "seeds": seeds,
                      "git_commit": git_commit()})
     return metadata
