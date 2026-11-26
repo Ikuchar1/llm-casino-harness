@@ -9,13 +9,16 @@ against the tally and sets each hypothesis's status.
 import dataclasses
 from collections import Counter
 from dataclasses import dataclass
-from typing import Any
+import re
+from typing import Any, Optional
 
 from poker.engine import CALL, CHECK, FOLD, STREETS, DecisionState, HandRecord
 
 POSTFLOP_STREETS = STREETS[1:]
 FACED_BET_OUTCOMES = ("fold", "call", "raise", "continue", "no_raise")
 CHECKED_TO_OUTCOMES = ("bet", "check")
+MAX_HYPOTHESES = 3
+WORD_BUDGET = 100  # words of hypothesis text across all notes; counts and status are extra
 SHOWN_HANDS = 5  # showdown cards listed in the tally text, most recent first
 
 
@@ -146,3 +149,115 @@ def _faced_a_bet(state: DecisionState) -> bool:
     if state.street != "preflop":
         return True
     return any(_outcome(action.action) == RAISE for action in state.history if action.street == "preflop")
+
+
+# ---------- Hypotheses and notes ----------
+
+TENTATIVE = "TENTATIVE"
+CONFIRMED = "CONFIRMED"
+STATUSES = (TENTATIVE, CONFIRMED)
+
+_FOR = re.compile(r"^for\s*[:=]?\s*(\d+)$", re.IGNORECASE)
+_AGAINST = re.compile(r"^against\s*[:=]?\s*(\d+)$", re.IGNORECASE)
+_KEY = re.compile(r"^key\s*[:=]?\s*([a-z_.]+)$", re.IGNORECASE)
+_LEAD = re.compile(r"^\s*(?:[-*\u2022]\s*)?(?:\d+[.)]|H\d+\s*[:.)])?\s*")  # bullets, "1.", "H1:"
+
+
+@dataclass(frozen=True)
+class Hypothesis:
+    """One read on the opponent. `opportunity_key` names the tally count it cites (None if uncited)."""
+
+    text: str
+    for_count: int
+    against_count: int
+    opportunity_key: Optional[str]
+    status: str = TENTATIVE
+
+    def line(self) -> str:
+        """The notes line format: `never folds to bets | for 9 | against 0 | TENTATIVE`."""
+        return f"{self.text} | for {self.for_count} | against {self.against_count} | {self.status}"
+
+    def cited_line(self) -> str:
+        """The line format with the cited tally key, as the model writes it in a rewrite."""
+        return (
+            f"{self.text} | key {self.opportunity_key} | for {self.for_count} | against {self.against_count}"
+            f" | {self.status}"
+        )
+
+
+def parse_line(line: str) -> Optional[Hypothesis]:
+    """One hypothesis from a `text | [key K |] for N | against M [| STATUS]` line, else None."""
+    fields = [field.strip() for field in _LEAD.sub("", line, count=1).split("|")]
+    text, rest = fields[0], fields[1:]
+    for_count = against = key = None
+    status = TENTATIVE
+    for field in rest:
+        if (match := _FOR.match(field)) and for_count is None:
+            for_count = int(match.group(1))
+        elif (match := _AGAINST.match(field)) and against is None:
+            against = int(match.group(1))
+        elif match := _KEY.match(field):
+            key = match.group(1).lower()
+        elif field.upper() in STATUSES:
+            status = field.upper()
+    if not text or for_count is None or against is None:
+        return None
+    return Hypothesis(text, for_count, against, key, status)
+
+
+@dataclass(frozen=True)
+class Notes:
+    """The model's notes on the opponent: at most MAX_HYPOTHESES hypotheses."""
+
+    hypotheses: tuple[Hypothesis, ...] = ()
+
+    def lines(self) -> list[str]:
+        return [hypothesis.line() for hypothesis in self.hypotheses]
+
+
+@dataclass
+class ParseResult:
+    """What the rewrite parser kept, and which of its tolerances it used."""
+
+    notes: Notes
+    junk_lines: list[str]  # non-blank lines that were not a hypothesis
+    dropped: list[str]  # hypothesis lines past MAX_HYPOTHESES
+    truncated: bool  # hypothesis text was cut to fit WORD_BUDGET
+    parse_failed: bool  # no hypothesis parsed, so the previous notes were kept
+
+
+def parse_rewrite(response: str, previous: Notes) -> ParseResult:
+    """The model's rewrite as Notes; junk lines skipped, the previous notes kept if nothing parses."""
+    hypotheses: list[Hypothesis] = []
+    junk: list[str] = []
+    dropped: list[str] = []
+    for raw in (response or "").splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        hypothesis = parse_line(line)
+        if hypothesis is None:
+            junk.append(line)
+        elif len(hypotheses) == MAX_HYPOTHESES:
+            dropped.append(line)
+        else:
+            hypotheses.append(hypothesis)
+    if not hypotheses:
+        return ParseResult(previous, junk, dropped, False, True)
+    kept, truncated = _fit_word_budget(hypotheses)
+    return ParseResult(Notes(tuple(kept)), junk, dropped, truncated, False)
+
+
+def _fit_word_budget(hypotheses: list[Hypothesis]) -> tuple[list[Hypothesis], bool]:
+    """Cut hypothesis text to WORD_BUDGET words in total; a hypothesis left with no words is dropped."""
+    kept: list[Hypothesis] = []
+    left = WORD_BUDGET
+    for hypothesis in hypotheses:
+        words = hypothesis.text.split()
+        if len(words) > left:
+            if left:
+                kept.append(dataclasses.replace(hypothesis, text=" ".join(words[:left])))
+            return kept, True
+        kept.append(hypothesis)
+        left -= len(words)
+    return kept, False

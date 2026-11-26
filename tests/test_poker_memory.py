@@ -8,7 +8,7 @@ is real engine output. The model is always "hero"; the opponent is "villain".
 from poker.bots import make_bot
 from poker.engine import play_hand, play_match
 from poker.runner import match_seeds
-from poker.memory import OpponentTally
+from poker.memory import CONFIRMED, TENTATIVE, WORD_BUDGET, Hypothesis, Notes, OpponentTally, parse_line, parse_rewrite
 
 
 class ScriptedPlayer:
@@ -133,3 +133,72 @@ def test_over_a_40_hand_match_against_the_calling_station_the_tally_shows_it_fol
     assert tally.hands == 40
     assert folds == 0 and others > 20
     assert f"faced a bet {others} times: folded 0, called {others}, raised 0" in tally.render()
+
+
+# ---------- Hypotheses and notes ----------
+
+
+def test_a_hypothesis_renders_in_the_line_format_and_parses_back_to_the_same_hypothesis():
+    hypothesis = Hypothesis("never folds to bets", 9, 0, "faced_bet.continue", TENTATIVE)
+
+    assert hypothesis.line() == "never folds to bets | for 9 | against 0 | TENTATIVE"
+    assert parse_line(hypothesis.cited_line()) == hypothesis
+    assert parse_line(hypothesis.line()) == Hypothesis("never folds to bets", 9, 0, None, TENTATIVE)
+
+
+# ---------- Rewrite parser ----------
+
+PREVIOUS = Notes((Hypothesis("plays every hand", 4, 1, "preflop.vpip", TENTATIVE),))
+
+
+def test_the_rewrite_parser_skips_junk_lines_keeps_the_hypotheses_and_logs_the_junk():
+    response = (
+        "Sure! Here are my updated notes:\n"
+        "\n"
+        "1. never folds to bets | key faced_bet.continue | for 9 | against 0\n"
+        "This opponent seems loose.\n"
+        "- H2: never raises | key: faced_bet.no_raise | for: 9 | against: 0 | CONFIRMED\n"
+    )
+
+    result = parse_rewrite(response, PREVIOUS)
+
+    assert result.notes == Notes((
+        Hypothesis("never folds to bets", 9, 0, "faced_bet.continue", TENTATIVE),
+        Hypothesis("never raises", 9, 0, "faced_bet.no_raise", CONFIRMED),
+    ))
+    assert result.junk_lines == ["Sure! Here are my updated notes:", "This opponent seems loose."]
+    assert not result.parse_failed and not result.dropped and not result.truncated
+
+
+def test_the_rewrite_parser_keeps_the_first_three_hypotheses_and_logs_the_dropped_lines():
+    lines = [f"read {n} | key faced_bet.call | for {n} | against 0" for n in range(1, 6)]
+
+    result = parse_rewrite("\n".join(lines), PREVIOUS)
+
+    assert [h.text for h in result.notes.hypotheses] == ["read 1", "read 2", "read 3"]
+    assert result.dropped == lines[3:]
+
+
+def test_an_empty_or_unreadable_rewrite_keeps_the_previous_notes_and_logs_a_parse_failure():
+    for response in ("", None, "I think they are loose.\nNo counts here."):
+        result = parse_rewrite(response, PREVIOUS)
+
+        assert result.notes == PREVIOUS
+        assert result.parse_failed
+
+
+def test_hypothesis_text_past_the_word_budget_is_cut_and_the_cut_is_logged():
+    long_text = " ".join(f"word{n}" for n in range(60))
+    response = "\n".join(f"{long_text} | key faced_bet.call | for 1 | against 0" for _ in range(3))
+
+    result = parse_rewrite(response, PREVIOUS)
+
+    words = [len(h.text.split()) for h in result.notes.hypotheses]
+    assert words == [60, WORD_BUDGET - 60]
+    assert result.truncated
+
+
+def test_notes_within_the_word_budget_are_not_marked_truncated():
+    result = parse_rewrite("never folds | key faced_bet.continue | for 9 | against 0", PREVIOUS)
+
+    assert not result.truncated
