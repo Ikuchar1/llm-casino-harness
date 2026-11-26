@@ -325,3 +325,83 @@ def verify(notes: Notes, tally: OpponentTally) -> VerifyResult:
             status=status_for(hypothesis.opportunity_key, true_for, true_against),
         ))
     return VerifyResult(Notes(tuple(checked)), mismatches, unverifiable)
+
+
+# ---------- Rewrite prompt ----------
+
+
+def render_hand(record: HandRecord, model_name: str) -> str:
+    """One hand on one line, as the model saw it: the opponent's cards appear only at showdown."""
+    opponent = next(name for name in record.seats.values() if name != model_name)
+    who = {seat: ("you" if name == model_name else "opp") for seat, name in record.seats.items()}
+    seat = "the button" if record.button == model_name else "the big blind"
+    parts = [f"hand {record.hand_number}: you on {seat} with {' '.join(record.hole_cards[model_name])}"]
+    board_by_street = {"preflop": [], "flop": record.board[:3], "turn": record.board[3:4], "river": record.board[4:5]}
+    for street in STREETS:
+        actions = [action for action in record.actions if action.street == street]
+        if not actions:
+            continue
+        moves = ", ".join(
+            f"{who[action.seat]} {action.action}" + (f" {action.amount}" if action.amount else "") for action in actions
+        )
+        cards = " ".join(board_by_street[street])
+        parts.append(f"{street}{' ' + cards if cards else ''}: {moves}")
+    if record.showdown:
+        if len(record.board) == 5 and not any(a.street == "river" for a in record.actions):
+            parts.append(f"board run out {' '.join(record.board)}")
+        parts.append(f"showdown: opp showed {' '.join(record.hole_cards[opponent])}")
+    parts.append(f"result: you {record.chip_delta[model_name]:+d}")
+    return " | ".join(parts)
+
+
+def build_rewrite_prompt(
+    previous: Notes, tally: OpponentTally, recent_hands: list[HandRecord], model_name: str
+) -> str:
+    """The every-5-hands prompt: rewrite the notes in full from the tally and the last hands."""
+    old = "\n".join(h.cited_line() for h in previous.hypotheses) or "(none yet)"
+    hands = "\n".join(render_hand(record, model_name) for record in recent_hands) or "(none)"
+    return f"""You are playing heads-up no-limit Hold'em and keep short notes about your opponent's habits.
+Rewrite your notes in full from the evidence below. Do not just add to the old notes: keep a line only if the counts still support it.
+
+Previous notes; revise or discard based on the counts below:
+{old}
+
+Opponent tally after {tally.hands} hands (counted by the harness from what you could see; "key X of N" means for X, against N - X):
+{tally.render()}
+
+Last {len(recent_hands)} hands ("opp" is your opponent):
+{hands}
+
+Write at most {MAX_HYPOTHESES} hypotheses about how the opponent plays, one per line, in exactly this format:
+<what the opponent does> | key <tally key> | for <N> | against <M>
+Each line must cite one tally key from above (for example faced_bet.fold or preflop.vpip) and copy its for and against counts: for counts the times it happened, against the other opportunities.
+Keep all the lines under {WORD_BUDGET} words in total. Output only the hypothesis lines, nothing else."""
+
+
+# ---------- Decision-time notes block ----------
+
+NOTES_BLOCK_CHAR_CAP = 900  # fixed budget, so memory-on prompts differ from memory-off only by this block
+_NOTES_HEADER = "Your notes on the opponent (counts checked by the harness):"
+_NUDGE = (
+    "CONFIRMED reads rest on enough opportunities to act on; "
+    "TENTATIVE reads should only nudge your play, not override it."
+)
+
+
+def render_notes_block(notes: Notes) -> str:
+    """The capped notes block for the decision prompt; empty while there are no notes."""
+    if not notes.hypotheses:
+        return ""
+    room = NOTES_BLOCK_CHAR_CAP - len(_NOTES_HEADER) - len(_NUDGE) - 1  # newline after the header
+    lines: list[str] = []
+    for hypothesis in notes.hypotheses:
+        line = "- " + hypothesis.line()
+        if len(line) + 1 > room:  # cut the text, never the counts and status
+            tail = line[len("- " + hypothesis.text):]
+            text_room = room - 1 - len("- ") - len(tail)
+            if text_room <= 0:
+                break
+            line = "- " + hypothesis.text[:text_room] + tail
+        lines.append(line)
+        room -= len(line) + 1
+    return "\n".join([_NOTES_HEADER, *lines, _NUDGE])

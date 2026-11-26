@@ -13,8 +13,9 @@ from poker.memory import (
     HAND_FREQUENCY_THRESHOLD,
     LEAK_THRESHOLD,
     MAX_AGAINST_SHARE,
+    NOTES_BLOCK_CHAR_CAP,
     TENTATIVE,
-    WORD_BUDGET, Hypothesis, Notes, OpponentTally, parse_line, parse_rewrite, status_for, verify,
+    WORD_BUDGET, Hypothesis, build_rewrite_prompt, Notes, OpponentTally, parse_line, parse_rewrite, render_hand, render_notes_block, status_for, verify,
 )
 
 
@@ -297,3 +298,73 @@ def test_the_harness_sets_status_from_the_tally_whatever_status_the_model_wrote(
     statuses = [h.status for h in verify(claimed, tally).notes.hypotheses]
 
     assert statuses == [CONFIRMED, TENTATIVE]
+
+
+# ---------- Rewrite prompt ----------
+
+
+def test_a_raw_hand_renders_compactly_from_the_models_view_with_the_opponents_cards_only_at_showdown():
+    folded = hand(seed=2, hand_number=4, hero=["call", "raise_pot"], villain=["check", "check", "fold"])
+    shown = hand(seed=1, hand_number=5)
+
+    folded_text = render_hand(folded, "hero")
+    shown_text = render_hand(shown, "hero")
+
+    assert folded_text.startswith("hand 4: you on the button with " + " ".join(folded.hole_cards["hero"]))
+    assert "opp check, you raise_pot 4, opp fold" in folded_text
+    assert not any(card in folded_text for card in folded.hole_cards["villain"])
+    assert f"result: you {folded.chip_delta['hero']:+d}" in folded_text
+    assert "opp showed " + " ".join(shown.hole_cards["villain"]) in shown_text
+
+
+def test_the_rewrite_prompt_shows_the_labelled_old_notes_the_tally_the_last_hands_and_the_output_format():
+    records = [hand(seed=s, hand_number=s) for s in range(7)]
+    tally = tally_of(*records)
+
+    prompt = build_rewrite_prompt(PREVIOUS, tally, records[-5:], "hero")
+
+    assert "previous notes; revise or discard based on the counts below" in prompt.lower()
+    assert PREVIOUS.hypotheses[0].cited_line() in prompt
+    assert tally.render() in prompt
+    for record in records[-5:]:
+        assert render_hand(record, "hero") in prompt
+    assert render_hand(records[0], "hero") not in prompt
+    assert "at most 3" in prompt
+    assert "<what the opponent does> | key <tally key> | for <N> | against <M>" in prompt
+    assert "rewrite" in prompt.lower() and "in full" in prompt.lower()
+
+
+def test_the_first_rewrite_prompt_says_there_are_no_previous_notes():
+    prompt = build_rewrite_prompt(Notes(), tally_of(hand()), [hand()], "hero")
+
+    assert "(none yet)" in prompt
+
+
+# ---------- Decision-time notes block ----------
+
+
+def test_the_notes_block_lists_each_hypothesis_line_and_says_tentative_reads_only_nudge_play():
+    notes = Notes((
+        Hypothesis("never folds to bets", 9, 0, "faced_bet.continue", CONFIRMED),
+        Hypothesis("plays every hand", 6, 0, "preflop.vpip", TENTATIVE),
+    ))
+
+    block = render_notes_block(notes)
+
+    assert "never folds to bets | for 9 | against 0 | CONFIRMED" in block
+    assert "plays every hand | for 6 | against 0 | TENTATIVE" in block
+    assert "TENTATIVE reads should only nudge your play" in block
+
+
+def test_the_notes_block_never_exceeds_its_character_cap_and_keeps_the_nudge_line():
+    long_text = "x" * 400
+    notes = Notes(tuple(Hypothesis(long_text, 9, 0, "faced_bet.call", TENTATIVE) for _ in range(3)))
+
+    block = render_notes_block(notes)
+
+    assert len(block) <= NOTES_BLOCK_CHAR_CAP
+    assert "TENTATIVE reads should only nudge your play" in block
+
+
+def test_with_no_notes_yet_the_notes_block_is_empty():
+    assert render_notes_block(Notes()) == ""
