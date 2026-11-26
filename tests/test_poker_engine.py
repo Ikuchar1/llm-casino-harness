@@ -132,6 +132,15 @@ def test_a_player_facing_an_all_in_can_only_fold_or_call_and_is_offered_no_raise
     assert menu_of(big_blind_states[0]) == [("fold", 0), ("call", 198)]
 
 
+def test_the_decision_state_says_which_off_menu_names_the_engine_applies_and_as_which_menu_action():
+    _, big_blind_states, _ = first_states(button_choices=["all_in"])
+    facing_shove = big_blind_states[0]
+
+    assert [facing_shove.applied_action(name) for name in ("fold", "call", "all_in", "raise_pot", "check", None)] == [
+        "fold", "call", "call", "call", None, None,
+    ]
+
+
 def test_pot_raises_that_would_go_past_the_stack_clamp_to_all_in_are_dropped_and_recorded():
     # Pot raises: button to 6, big blind to 18, button to 54, big blind to 162.
     _, _, record = first_states(button_choices=["raise_pot", "raise_pot", "fold"], big_blind_choices=["raise_pot", "raise_pot"])

@@ -89,6 +89,15 @@ class DecisionState:
     is_button: bool
     history: tuple[Action, ...]  # every action this hand so far, oldest first (blinds not included)
     menu: tuple[MenuItem, ...]
+    # Off-menu names the engine still applies (name, menu action): a raise dropped as a
+    # duplicate of another item, or any raise when no raise is legal (applied as the call).
+    dropped: tuple[tuple[str, str], ...] = ()
+
+    def applied_action(self, choice: Optional[str]) -> Optional[str]:
+        """The menu action the engine applies for this choice, or None when it would fall back."""
+        if any(item.action == choice for item in self.menu):
+            return choice
+        return dict(self.dropped).get(choice)
 
 
 @dataclass(frozen=True)
@@ -166,12 +175,11 @@ def play_hand(
             seat = BUTTON if state.actor_index == _POKERKIT_INDEX[BUTTON] else BIG_BLIND_SEAT
             player = players[seat_names[seat]]
             menu, clamps, dropped = _menu(state, bot_sizing=getattr(player, "bot_sizing", False))
-            snapshot = _decision_state(state, seat, hole[seat], board, history, menu)
+            snapshot = _decision_state(state, seat, hole[seat], board, history, menu, dropped)
             choice = player.decide(snapshot)
-            item = next((item for item in menu if item.action == choice), None) or dropped.get(choice)
-            fallback = item is None
-            if fallback:
-                item = _fallback_item(menu)
+            applied = snapshot.applied_action(choice)
+            fallback = applied is None
+            item = _fallback_item(menu) if fallback else next(item for item in menu if item.action == applied)
             clamped = not fallback and any(clamp.action == choice for clamp in clamps)
             decisions.append(DecisionRecord(
                 player=seat_names[seat], state=snapshot, choice=choice, action=item.action,
@@ -238,7 +246,8 @@ def play_match(seeds: list[int], players: dict[str, Player]) -> list[HandRecord]
 
 
 def _decision_state(
-    state, seat: str, hole_cards: list[str], board: list[str], history: list[Action], menu: list[MenuItem]
+    state, seat: str, hole_cards: list[str], board: list[str], history: list[Action], menu: list[MenuItem],
+    dropped: dict[str, MenuItem],
 ) -> DecisionState:
     me = _POKERKIT_INDEX[seat]
     to_call = state.checking_or_calling_amount
@@ -254,6 +263,7 @@ def _decision_state(
         is_button=seat == BUTTON,
         history=tuple(history),
         menu=tuple(menu),
+        dropped=tuple((name, item.action) for name, item in dropped.items()),
     )
 
 
