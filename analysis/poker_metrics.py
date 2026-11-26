@@ -8,7 +8,7 @@
    pairs, and a paired comparison of two runs dealt the same seeds.
 4. VPIP, PFR, AF and WTSD (descriptive).
 5. Fallback rate, with a breakdown by parse_status.
-6. Mean prompt tokens per decision, when the run logged them.
+6. Mean prompt tokens and model seconds per decision, when the run logged them.
 
 Every metric counts only the model's decisions (player == "model"). Equity is
 Monte Carlo vs one random hand (poker.hands.equity_vs_random), seeded from a hash of
@@ -363,7 +363,7 @@ def self_check_summary(rows: list[Row]) -> Optional[SelfCheckSummary]:
     )
 
 
-# 6. Prompt length --------------------------------------------------------------------
+# 6. Prompt length and time ---------------------------------------------------------------
 
 
 def mean_prompt_tokens(rows: list[Row]) -> Optional[float]:
@@ -371,6 +371,19 @@ def mean_prompt_tokens(rows: list[Row]) -> Optional[float]:
     (scripted players, or runs from before the column existed)."""
     counts = [row["prompt_tokens"] for row in _model(rows) if row.get("prompt_tokens") is not None]
     return sum(counts) / len(counts) if counts else None
+
+
+def mean_seconds_per_decision(rows: list[Row]) -> Optional[float]:
+    """Mean model call time per decision: total_latency_s (first call plus any re-check),
+    or latency_s on rows logged before total_latency_s existed; None if no row has either."""
+    times = []
+    for row in _model(rows):
+        seconds = row.get("total_latency_s")
+        if seconds is None:
+            seconds = row.get("latency_s")
+        if seconds is not None:
+            times.append(seconds)
+    return sum(times) / len(times) if times else None
 
 
 # Paired comparison of two runs on the same seeds ------------------------------------
@@ -508,6 +521,7 @@ def summarize_run(run: Run, first_hands: int = FIRST_HANDS, last_hands: int = LA
         "fallback": _proportion(quality.fallback),
         "parse_status": quality.parse_status,
         "prompt_tokens_mean": _number(mean_prompt_tokens(run.decisions)),
+        "seconds_per_decision": _number(mean_seconds_per_decision(run.decisions)),
         "self_check": None if checked is None else {
             "flips": _proportion(checked.flips), "first_pass_fallback": _proportion(checked.first_pass_fallback),
             "final_fallback": _proportion(checked.final_fallback)},

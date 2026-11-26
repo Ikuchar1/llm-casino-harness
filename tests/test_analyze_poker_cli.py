@@ -43,8 +43,11 @@ def test_analyzing_a_run_prints_its_table_and_writes_summary_json_and_csv(tmp_pa
     assert only["trend"]["first_hands"] == 2 and only["trend"]["last_hands"] == 10
     assert only["bb_per_100"]["pairs"] == 6
     assert only["prompt_tokens_mean"] is None  # scripted players log no tokens
+    assert only["seconds_per_decision"] is None  # nor call times
+    assert "s/decision n/a" in printed
     rows = list(csv.DictReader((out / "summary.csv").open()))
     assert len(rows) == 1 and rows[0]["bot"] == "maniac"
+    assert rows[0]["seconds_per_decision"] == ""
 
 
 def test_the_fold_to_bet_rate_is_split_into_preflop_and_postflop_in_summary_json_and_csv(tmp_path, monkeypatch):

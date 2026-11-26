@@ -65,7 +65,8 @@ def print_run(summary: dict[str, Any]) -> None:
           f"AF {_num(profile['af'], '.2f')} ({profile['af_bets_raises']}/{profile['af_calls']})  WTSD {_pct(profile['wtsd']['rate'])}")
     statuses = ", ".join(f"{status} {count}" for status, count in summary["parse_status"].items()) or "none"
     print(f"  fallback {_rate(summary['fallback'])}; parse status: {statuses}; "
-          f"prompt tokens/decision {_num(summary['prompt_tokens_mean'], '.0f')}")
+          f"prompt tokens/decision {_num(summary['prompt_tokens_mean'], '.0f')}; "
+          f"s/decision {_num(summary.get('seconds_per_decision'), '.2f')}")
     checked = summary.get("self_check")
     if checked is not None:
         print(f"  self-check flips {_rate(checked['flips'])}; fallback first pass {_rate(checked['first_pass_fallback'])}, "
@@ -99,7 +100,8 @@ def csv_row(summary: dict[str, Any]) -> dict[str, Any]:
     row.update({"vpip": profile["vpip"]["rate"], "pfr": profile["pfr"]["rate"], "af": profile["af"],
                 "af_bets_raises": profile["af_bets_raises"], "af_calls": profile["af_calls"],
                 "wtsd": profile["wtsd"]["rate"], "fallback_rate": summary["fallback"]["rate"],
-                "prompt_tokens_mean": summary["prompt_tokens_mean"]})
+                "prompt_tokens_mean": summary["prompt_tokens_mean"],
+                "seconds_per_decision": summary.get("seconds_per_decision")})
     checked = summary.get("self_check") or {}
     row.update({"self_check_flips": checked.get("flips", {}).get("k"),
                 "self_check_flip_rate": checked.get("flips", {}).get("rate"),

@@ -315,6 +315,14 @@ def test_an_off_menu_choice_the_engine_still_applied_is_not_a_fallback():
     assert output.parse_status == {"off_menu": 1, "unparseable": 1}
 
 
+def test_seconds_per_decision_uses_total_latency_and_falls_back_to_latency_for_rows_logged_before_it():
+    rows = [decision(latency_s=1.0, total_latency_s=3.0), decision(latency_s=2.0),
+            decision(latency_s=None, total_latency_s=None), decision(latency_s=99.0, player="bot")]
+
+    assert pm.mean_seconds_per_decision(rows) == pytest.approx(2.5)
+    assert pm.mean_seconds_per_decision([decision(), decision(player="bot", latency_s=1.0)]) is None
+
+
 def test_prompt_tokens_per_decision_is_the_mean_over_the_models_logged_counts_and_none_when_never_logged():
     logged = [decision(prompt_tokens=300), decision(prompt_tokens=500), decision(prompt_tokens=None),
               decision(prompt_tokens=9999, player="bot")]
