@@ -5,6 +5,11 @@ Ollama client (agent/ollama_client.py), whose locked options decode at temperatu
 The player keeps a PokerDecisionDetail for every decision (prompt, raw reply, parse
 result, timing); the runner merges them into the decision log rows.
 
+In the full-tools setups every decision gets one more turn in the same conversation,
+the generic re-check (poker.self_check); its menu action, if it named one, is played,
+else the first answer. With self-evaluation the parse fields describe the answer played,
+while raw_response and the call stats are the first call's (the second is in self_check).
+
 When the reply names a real action that is off the menu, decide() still returns that
 name: the engine then applies its fallback (check, or fold if check is illegal), or the
 item a dropped pot raise collapsed into. An unparseable or cut-off reply returns None (fallback).
@@ -16,18 +21,37 @@ from typing import Any, Optional
 from agent.config import HarnessConfig
 from agent.ollama_client import ChatClient, ChatReply
 from poker.engine import DecisionState
+from poker.equity_info import EQUITY_SAMPLES, EquityInfo, equity_info
 from poker.memory import REWRITE_SYSTEM_PROMPT
-from poker.parser import PARSER_VERSION, parse_choice
+from poker.parser import PARSER_VERSION, ParseResult, parse_choice
+from poker.self_check import SELF_CHECK_VERSION, final_choice, flags, recheck_prompt
+from poker.preflop_chart import PREFLOP_CHART_VERSION, chart_lines, chart_play, hand_class, spot
 from poker.prompt import PROMPT_VERSION, build_system_prompt, build_user_prompt
 
-# The poker setups (docs/poker-plan.md, decision 7), as harness configs. Full tools
-# (equity, hand chart, self-check) are not built yet, so they have no setup here.
+# The poker setups (docs/poker-plan.md, decision 7), as harness configs. Full tools are
+# equity and pot odds (poker.equity_info), the preflop chart (poker.preflop_chart) and
+# the self-check (poker.self_check).
 PLAIN = HarnessConfig(name="plain")
 MEMORY = HarnessConfig(name="memory", memory=True)
-SETUPS: dict[str, HarnessConfig] = {setup.name: setup for setup in (PLAIN, MEMORY)}
+TOOLS = HarnessConfig(name="tools", probability_tool=True, strategy_info=True, self_evaluation=True)
+TOOLS_MEMORY = HarnessConfig(name="tools_memory", probability_tool=True, strategy_info=True, memory=True,
+                             self_evaluation=True)
+SETUPS: dict[str, HarnessConfig] = {setup.name: setup for setup in (PLAIN, MEMORY, TOOLS, TOOLS_MEMORY)}
 
 # Harness components this player can run; anything else raises NotImplementedError.
-BUILT_COMPONENTS: set[str] = {"memory"}
+BUILT_COMPONENTS: set[str] = {"memory", "probability_tool", "strategy_info", "self_evaluation"}
+
+
+def tools_settings(config: HarnessConfig) -> Optional[dict[str, Any]]:
+    """The tool versions a run records and a resume must match (None = no tool on; a key per tool on)."""
+    settings = {}
+    if config.probability_tool:
+        settings["equity_samples"] = EQUITY_SAMPLES
+    if config.strategy_info:
+        settings["preflop_chart_version"] = PREFLOP_CHART_VERSION
+    if config.self_evaluation:
+        settings["self_check_version"] = SELF_CHECK_VERSION
+    return settings or None
 
 
 @dataclass
@@ -45,6 +69,12 @@ class PokerDecisionDetail:
     eval_count: Optional[int]  # tokens generated
     prompt_tokens: Optional[int]  # Ollama's prompt_eval_count (None when not reported)
     latency_s: float
+    # The full-tools setups only (None otherwise). tools: what the equity and chart lines
+    # showed (_tools). self_check: the first answer, the re-check and its reply (_re_check).
+    # flags: poker.self_check.flags() on the first answer, logged only, never shown to the model.
+    tools: Optional[dict[str, Any]] = None
+    self_check: Optional[dict[str, Any]] = None
+    flags: Optional[list[str]] = None
 
 
 class PokerLLMPlayer:
@@ -63,10 +93,20 @@ class PokerLLMPlayer:
 
     def decide(self, state: DecisionState) -> Optional[str]:
         """Ask the model and return its menu action, the off-menu action it named, or None."""
-        user_prompt = build_user_prompt(state, notes=self.notes)
+        info = equity_info(state) if self.config.probability_tool or self.config.self_evaluation else None
+        tool_lines, tools_log = self._tools(state, info)
+        user_prompt = build_user_prompt(state, notes=self.notes, tools=tool_lines)
         # Errors from the client (e.g. Ollama down) propagate and stop the run.
         reply = self.client.chat(self.system_prompt, user_prompt)
         result = parse_choice(reply.content, state.menu, reply.done_reason)
+        choice = result.action if result.action is not None else result.named
+        self_check, warnings = None, None
+        if self.config.self_evaluation:
+            # flags() is a logged-only diagnostic: the re-check stays generic (CONTEXT.md).
+            warnings = flags(state, result.action, info)
+            self_check, second = self._re_check(state, user_prompt, reply.content, result, choice)
+            if second.action is not None:
+                result, choice = second, second.action
         self._details.append(PokerDecisionDetail(
             user_prompt=user_prompt,
             raw_response=reply.content,
@@ -79,16 +119,76 @@ class PokerLLMPlayer:
             eval_count=reply.eval_count,
             prompt_tokens=reply.prompt_eval_count,
             latency_s=reply.latency_s,
+            tools=tools_log,
+            self_check=self_check,
+            flags=warnings,
         ))
-        return result.action if result.action is not None else result.named
+        return choice
+
+    def _re_check(self, state: DecisionState, user_prompt: str, first_raw: str, first: ParseResult,
+                  first_choice: Optional[str]) -> tuple[dict[str, Any], ParseResult]:
+        """Continue the conversation with the generic re-check; return its log and the second parse."""
+        prompt = recheck_prompt(first.action)
+        messages = [
+            {"role": "system", "content": self.system_prompt},
+            {"role": "user", "content": user_prompt},
+            {"role": "assistant", "content": first_raw},
+            {"role": "user", "content": prompt},
+        ]
+        reply = self.client.chat_messages(messages)
+        second = parse_choice(reply.content, state.menu, reply.done_reason)
+        final = final_choice(first_choice, second.action)
+        log = {
+            "first_action": first.action,
+            "first_parse_status": first.status,
+            "recheck_prompt": prompt,
+            "second_raw": reply.content,
+            "second_action": second.action,
+            "second_parse_status": second.status,
+            "final_action": final,
+            "flipped": final != first_choice,
+            "done_reason": reply.done_reason,
+            "eval_count": reply.eval_count,
+            "prompt_tokens": reply.prompt_eval_count,
+            "latency_s": round(reply.latency_s, 3),
+        }
+        return log, second
+
+    def _tools(self, state: DecisionState, info: Optional[EquityInfo]) -> tuple[list[str], Optional[dict[str, Any]]]:
+        """The tool lines for the prompt, and what they showed for the log (None when no tool is on)."""
+        if not (self.config.probability_tool or self.config.strategy_info):
+            return [], None
+        lines: list[str] = []
+        log: dict[str, Any] = {}
+        if self.config.probability_tool:
+            lines += info.lines()
+            log.update(equity=round(info.equity, 4),
+                       pot_odds=round(info.pot_odds, 4) if info.pot_odds is not None else None,
+                       equity_seed=info.seed, equity_samples=info.samples)
+        if self.config.strategy_info:
+            lines += chart_lines(state)
+            play = chart_play(state)
+            log.update(hand_class=hand_class(state.hole_cards) if play is not None else None,
+                       spot=spot(state), chart_play=play)
+        return lines, log
 
     def rewrite_notes(self, prompt: str) -> ChatReply:
         """The memory setup's notes rewrite: same client and options as the decisions."""
         return self.client.chat(REWRITE_SYSTEM_PROMPT, prompt)
 
     def run_metadata(self) -> dict[str, Any]:
-        """Run-level facts about this player's prompts, for metadata.json."""
-        return {"system_prompt": self.system_prompt, "prompt_version": PROMPT_VERSION, "parser_version": PARSER_VERSION}
+        """Run-level facts about this player's prompts, for metadata.json.
+
+        The tools setups add the tool versions (tools_settings) and the re-check texts.
+        """
+        metadata: dict[str, Any] = {"system_prompt": self.system_prompt, "prompt_version": PROMPT_VERSION,
+                                    "parser_version": PARSER_VERSION}
+        tools = tools_settings(self.config)
+        if tools is not None:
+            metadata["tools"] = tools
+        if self.config.self_evaluation:
+            metadata["recheck_prompts"] = {"valid": recheck_prompt("<first action>"), "invalid": recheck_prompt(None)}
+        return metadata
 
     def take_hand_details(self) -> list[PokerDecisionDetail]:
         """Return the details collected since the last call, and clear them."""

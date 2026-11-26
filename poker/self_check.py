@@ -5,11 +5,12 @@ conversation continues with a content-free re-check that names the first action 
 nothing else, and the model gives a final answer in the same ACTION line format.
 The final answer is the one played and graded.
 
-Below that, option B (flags, recheck_prompt's `warnings`): harness warnings about a
-likely mistake, shown in the re-check. Which one the full-tools setup wires is open.
+Below that, flags(): the harness's warnings about a likely mistake in the first answer.
+They are a logged-only diagnostic (the "flags" field of a decision row) and are never
+shown to the model, so the re-check stays generic, as CONTEXT.md defines self-evaluation.
 """
 
-from typing import Optional, Sequence
+from typing import Optional
 
 from poker.engine import CALL, CHECK, FOLD, DecisionState
 from poker.equity_info import EquityInfo
@@ -32,20 +33,11 @@ RECHECK_PROMPT_INVALID = (
 )
 
 
-def recheck_prompt(first_action: Optional[str], warnings: Sequence[str] = ()) -> str:
-    """The re-check for a first answer (None = the first reply named no menu action).
-
-    With no warnings this is the generic, content-free re-check. `warnings` (option B,
-    from flags()) go in a list right after "You chose X.".
-    """
+def recheck_prompt(first_action: Optional[str]) -> str:
+    """The generic, content-free re-check for a first answer (None = the first reply named no menu action)."""
     if first_action is None:
         return RECHECK_PROMPT_INVALID
-    prompt = RECHECK_PROMPT.format(first_action=first_action)
-    if not warnings:
-        return prompt
-    opening = f"You chose {first_action}. "
-    listed = "".join(f"- {warning}\n" for warning in warnings)
-    return f"{opening.rstrip()} The harness noticed:\n{listed}" + prompt.removeprefix(opening)
+    return RECHECK_PROMPT.format(first_action=first_action)
 
 
 def final_choice(first: Optional[str], second: Optional[str]) -> Optional[str]:
@@ -58,10 +50,9 @@ def final_choice(first: Optional[str], second: Optional[str]) -> Optional[str]:
     return second if second is not None else first
 
 
-# ---------- Option B (not chosen yet): harness flags that make the re-check content-bearing ----------
-# Blackjack's re-check is unconditional and content-free (CONTEXT.md, "Self-evaluation").
-# These flags are the alternative the poker brief sketched: the harness names a likely
-# mistake and the re-check (or only a flagged decision's re-check) shows it.
+# ---------- Flags: a logged-only diagnostic, never shown to the model ----------
+# They count how often the first answer made an obvious mistake, so the analysis can
+# tell whether the generic re-check fixes such answers.
 
 # A call is flagged when its equity is this far (absolute share) below the pot odds.
 CALL_GAP = 0.10

@@ -347,3 +347,62 @@ def test_resuming_a_memory_run_whose_memory_log_lost_a_rewrite_before_later_hand
 
     with pytest.raises(ValueError, match="cannot resume.*no logged rewrite after hand 5"):
         memory_run(out, n_pairs=6)
+
+
+class ToolsClient(AlwaysClient):
+    """Check/call first, and the same on every re-check."""
+
+    def __init__(self):
+        super().__init__("ACTION: check/call")
+        self.rechecks = 0
+
+    def chat_messages(self, messages):
+        self.rechecks += 1
+        return ChatReply(content="Still fine.\nACTION: check/call", done_reason="stop", eval_count=9, latency_s=0.125,
+                         prompt_eval_count=700)
+
+
+def tools_run(out, n_pairs=2):
+    from poker.llm_player import TOOLS
+
+    return run_match(out, spec(setup=TOOLS, n_pairs=n_pairs), PokerLLMPlayer(ToolsClient(), TOOLS),
+                     bots={"scripted": CheckCallPlayer})
+
+
+def test_a_tools_run_logs_the_tools_the_re_check_and_the_flags_on_model_rows_and_its_tool_versions(tmp_path):
+    from poker.llm_player import TOOLS, tools_settings
+
+    tools_run(tmp_path / "run")
+
+    decisions = read_jsonl(tmp_path / "run" / "decisions.jsonl")
+    model_rows = [row for row in decisions if row["player"] == MODEL]
+    first = model_rows[0]
+    assert first["prompt"].count("Equity (worked out by the harness") == 1 and "Preflop chart" in first["prompt"]
+    assert set(first["tools"]) == {"equity", "pot_odds", "equity_seed", "equity_samples", "hand_class", "spot", "chart_play"}
+    assert first["self_check"]["second_raw"] == "Still fine.\nACTION: check/call" and first["self_check"]["flipped"] is False
+    assert first["flags"] == []
+    assert all(row["tools"] is None and row["self_check"] is None and row["flags"] is None
+               for row in decisions if row["player"] == BOT)
+    metadata = json.loads((tmp_path / "run" / "metadata.json").read_text())
+    assert metadata["tools"] == tools_settings(TOOLS) and metadata["setup"] == "tools"
+
+
+def test_a_plain_run_has_no_tools_in_its_metadata_or_rows(tmp_path):
+    run(tmp_path / "run", PokerLLMPlayer(AlwaysClient("ACTION: check/call")))
+
+    assert json.loads((tmp_path / "run" / "metadata.json").read_text())["tools"] is None
+    rows = read_jsonl(tmp_path / "run" / "decisions.jsonl")
+    assert all(row["tools"] is None and row["self_check"] is None and row["flags"] is None for row in rows)
+
+
+def test_resuming_a_tools_run_started_under_another_chart_version_is_refused_before_anything_is_played(tmp_path):
+    out = tmp_path / "run"
+    tools_run(out, n_pairs=1)
+    metadata = json.loads((out / "metadata.json").read_text())
+    metadata["tools"]["preflop_chart_version"] = "preflop-chart-v0"
+    (out / "metadata.json").write_text(json.dumps(metadata))
+    before = (out / "decisions.jsonl").read_text()
+
+    with pytest.raises(ValueError, match="cannot resume.*preflop-chart-v0"):
+        tools_run(out, n_pairs=2)
+    assert (out / "decisions.jsonl").read_text() == before

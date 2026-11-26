@@ -131,3 +131,18 @@ def test_the_opponent_notes_block_appears_only_when_notes_are_given():
 
 def test_empty_notes_count_as_no_notes():
     assert build_user_prompt(flop_state(), notes="") == build_user_prompt(flop_state())
+
+
+def test_the_tools_block_sits_before_the_notes_and_the_legal_actions_and_is_the_only_difference():
+    from poker.prompt import tools_block
+
+    tools = ["Equity (...):", "- Your equity against a random hand: 55.0%."]
+    notes = "never folds to bets | for 9 | against 0 | TENTATIVE"
+
+    without = build_user_prompt(flop_state(), notes=notes)
+    with_tools = build_user_prompt(flop_state(), notes=notes, tools=tools)
+
+    assert tools_block(tools) == "Equity (...):\n- Your equity against a random hand: 55.0%.\n\n"
+    assert with_tools.index(tools_block(tools)) < with_tools.index(notes_block(notes)) < with_tools.index("Legal actions:")
+    assert with_tools.replace(tools_block(tools), "", 1) == without
+    assert build_user_prompt(flop_state(), tools=[]) == build_user_prompt(flop_state())

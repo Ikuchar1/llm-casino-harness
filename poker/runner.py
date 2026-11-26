@@ -24,6 +24,7 @@ from typing import Any, Callable, Mapping, Optional
 
 from agent.config import HarnessConfig
 from poker.engine import Player, play_hand
+from poker.llm_player import tools_settings
 from poker.parser import PARSER_VERSION
 from poker.memory import MemoryState, memory_settings
 from poker.prompt import PROMPT_VERSION
@@ -45,6 +46,9 @@ LLM_FIELDS = {
     "eval_count": "eval_count",
     "prompt_tokens": "prompt_tokens",
     "latency_s": "latency_s",
+    "tools": "tools",  # the tools setups only: what the equity and chart lines showed
+    "self_check": "self_check",  # the tools setups only: the first answer and the re-check
+    "flags": "flags",  # the tools setups only: poker.self_check.flags() on the first answer, never shown
 }
 # After those, every decision row has "notes_version": the index in memory.jsonl of the
 # rewrite whose notes the model's prompt showed; None before the first rewrite, for bot
@@ -287,7 +291,7 @@ def _load_or_new_metadata(out_dir: Path, spec: MatchSpec, seeds: list[int], extr
     """The existing run's metadata (same run_id) when resuming, else a new run's.
 
     A resume must match the run's model, setup, bot, base seed, prompt/parser
-    versions and memory settings, and its model_digest when both runs have one (ValueError otherwise, as
+    versions, memory settings and tool versions, and its model_digest when both runs have one (ValueError otherwise, as
     scripts/run_baseline.py refuses). The pair count may grow: the seed list only appends.
     """
     path = out_dir / "metadata.json"
@@ -297,7 +301,7 @@ def _load_or_new_metadata(out_dir: Path, spec: MatchSpec, seeds: list[int], extr
     expected = {
         "model": spec.model, "setup": spec.setup.name, "setup_flags": spec.setup.flags(), "bot": spec.bot,
         "base_seed": spec.base_seed, "prompt_version": PROMPT_VERSION, "parser_version": PARSER_VERSION,
-        "memory": _memory_metadata(spec),
+        "memory": _memory_metadata(spec), "tools": tools_settings(spec.setup),
     }
     stored_version = (metadata.get("memory") or {}).get("memory_version")
     wanted_version = (expected["memory"] or {}).get("memory_version")
@@ -357,6 +361,7 @@ def _new_metadata(spec: MatchSpec, seeds: list[int]) -> dict[str, Any]:
         "prompt_version": PROMPT_VERSION,
         "parser_version": PARSER_VERSION,
         "memory": _memory_metadata(spec),
+        "tools": tools_settings(spec.setup),
         "pokerkit_version": importlib.metadata.version("pokerkit"),
         "git_commit": git_commit(),
         "started_at": _now_iso(),

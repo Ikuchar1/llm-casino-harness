@@ -49,9 +49,3 @@ def test_the_harness_flags_a_free_fold_a_call_far_below_pot_odds_and_a_fold_with
     assert flags(facing, "fold", _info(0.75, facing)) == [HIGH_EQUITY_FOLD.format(equity="75.0%")]
     assert flags(facing, "fold", _info(0.5, facing)) == []
 
-
-def test_a_flagged_re_check_lists_the_warnings_between_the_first_action_and_the_generic_re_check():
-    plain = recheck_prompt("fold")
-    flagged = recheck_prompt("fold", [FREE_FOLD])
-    assert flagged == f"You chose fold. The harness noticed:\n- {FREE_FOLD}\n" + plain.removeprefix("You chose fold. ")
-    assert recheck_prompt("fold", []) == plain

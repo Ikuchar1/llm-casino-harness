@@ -5,10 +5,11 @@ The user message shows the cards, the street, the pot and stacks, this hand's ac
 (as "you" and "opponent"), and a numbered menu of only the legal actions with exact
 chip amounts. Nothing from earlier hands goes in, except the optional opponent
 notes block (the memory hook, docs/poker-plan.md "Memory"): memory-on and memory-off
-prompts differ only by that block.
+prompts differ only by that block. The full-tools setups add one more block before the
+notes (equity, pot odds, the preflop chart); without tools the prompt is unchanged.
 """
 
-from typing import Optional
+from typing import Optional, Sequence
 
 from poker.engine import (
     ALL_IN, BIG_BLIND, CALL, CHECK, FOLD, RAISE_HALF_POT, RAISE_POT, SMALL_BLIND, STARTING_STACK, STREETS,
@@ -71,12 +72,19 @@ def notes_block(notes: str) -> str:
     return f"{NOTES_HEADER}\n{notes}\n\n"
 
 
-def build_user_prompt(state: DecisionState, notes: Optional[str] = None) -> str:
+def tools_block(tools: Sequence[str]) -> str:
+    """The full-tools block (equity, preflop chart lines) exactly as it sits in the prompt."""
+    return "\n".join(tools) + "\n\n"
+
+
+def build_user_prompt(state: DecisionState, notes: Optional[str] = None, tools: Optional[Sequence[str]] = None) -> str:
     """The decision prompt for one state: the current hand only.
 
     `notes` is the memory setup's opponent notes block (docs/poker-plan.md, "Memory"):
     when given, notes_block(notes) is the only difference from the prompt without notes.
-    None or "" means no block.
+    None or "" means no block. `tools` are the full-tools setup's lines (poker.equity_info,
+    poker.preflop_chart); when given, tools_block(tools) goes just before the notes and is
+    the only other difference. None or empty means no block.
     """
     seat = (
         "You are on the button (small blind): you act first before the flop and last after it."
@@ -99,6 +107,8 @@ def build_user_prompt(state: DecisionState, notes: Optional[str] = None) -> str:
         "",
     ]
     prompt = "\n".join(lines) + "\n"
+    if tools:
+        prompt += tools_block(tools)
     if notes:
         prompt += notes_block(notes)
     return prompt + "\n".join(["Legal actions:", *menu_lines(state)])
