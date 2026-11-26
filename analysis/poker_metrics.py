@@ -336,6 +336,33 @@ def output_quality(rows: list[Row]) -> OutputQuality:
     )
 
 
+@dataclass(frozen=True)
+class SelfCheckSummary:
+    """The tools setups' re-check, over the model's re-checked decisions.
+
+    flips: the re-check changed the action played (final != first answer).
+    first_pass_fallback: the first answer named no menu action (the fallback rate the
+    first pass alone would have had, up to an off-menu name the engine still applied).
+    final_fallback: the answer played fell back, as in output_quality.
+    """
+
+    flips: Proportion
+    first_pass_fallback: Proportion
+    final_fallback: Proportion
+
+
+def self_check_summary(rows: list[Row]) -> Optional[SelfCheckSummary]:
+    """None when no decision was re-checked (every setup without self-evaluation)."""
+    checked = [row for row in _model(rows) if row.get("self_check")]
+    if not checked:
+        return None
+    return SelfCheckSummary(
+        flips=Proportion(sum(bool(row["self_check"]["flipped"]) for row in checked), len(checked)),
+        first_pass_fallback=Proportion(sum(row["self_check"]["first_action"] is None for row in checked), len(checked)),
+        final_fallback=Proportion(sum(bool(row["fallback"]) for row in checked), len(checked)),
+    )
+
+
 # 6. Prompt length --------------------------------------------------------------------
 
 
@@ -460,6 +487,7 @@ def summarize_run(run: Run, first_hands: int = FIRST_HANDS, last_hands: int = LA
     bb = bb_per_100(run.hands)
     profile = player_profile(run.decisions, run.hands)
     quality = output_quality(run.decisions)
+    checked = self_check_summary(run.decisions)
     return {
         "run": run.name,
         "run_id": run.run_id,
@@ -480,6 +508,9 @@ def summarize_run(run: Run, first_hands: int = FIRST_HANDS, last_hands: int = LA
         "fallback": _proportion(quality.fallback),
         "parse_status": quality.parse_status,
         "prompt_tokens_mean": _number(mean_prompt_tokens(run.decisions)),
+        "self_check": None if checked is None else {
+            "flips": _proportion(checked.flips), "first_pass_fallback": _proportion(checked.first_pass_fallback),
+            "final_fallback": _proportion(checked.final_fallback)},
     }
 
 

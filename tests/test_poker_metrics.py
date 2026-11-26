@@ -321,3 +321,24 @@ def test_prompt_tokens_per_decision_is_the_mean_over_the_models_logged_counts_an
 
     assert pm.mean_prompt_tokens(logged) == pytest.approx(400)
     assert pm.mean_prompt_tokens([decision(), decision(prompt_tokens=None)]) is None
+
+
+def check(first_action, final_action, flipped):
+    return {"first_action": first_action, "final_action": final_action, "flipped": flipped}
+
+
+def test_the_self_check_counts_flips_and_first_answers_with_no_menu_action_over_the_re_checked_decisions():
+    rows = [
+        decision(self_check=check("fold", "call", True)),
+        decision(self_check=check("call", "call", False)),
+        decision(self_check=check(None, "check", True)),
+        decision(fallback=True, parse_status="unparseable", self_check=check(None, None, False)),
+        decision(player="bot", self_check=None),
+    ]
+
+    result = pm.self_check_summary(rows)
+
+    assert (result.flips.k, result.flips.n) == (2, 4)
+    assert (result.first_pass_fallback.k, result.first_pass_fallback.n) == (2, 4)
+    assert (result.final_fallback.k, result.final_fallback.n) == (1, 4)
+    assert pm.self_check_summary([decision(), decision(self_check=None)]) is None

@@ -114,3 +114,46 @@ def test_compare_refuses_a_run_whose_metadata_has_no_seed_list(tmp_path, monkeyp
 
     assert code == 2
     assert "memory's metadata has no 'seeds'" in capsys.readouterr().err
+
+
+class FlippingOllama:
+    """First answers check/call; every re-check folds, so the re-check flips each decision."""
+
+    def __init__(self, model, **kwargs):
+        self.model = model
+
+    def chat(self, system, user):
+        from agent.ollama_client import ChatReply
+
+        return ChatReply(content="ACTION: check/call", done_reason="stop", eval_count=3, latency_s=0.1)
+
+    def chat_messages(self, messages):
+        from agent.ollama_client import ChatReply
+
+        return ChatReply(content="ACTION: fold", done_reason="stop", eval_count=3, latency_s=0.1)
+
+
+def test_a_tools_run_reports_the_self_check_flip_rate_and_the_first_and_final_pass_fallback_rates(
+        tmp_path, monkeypatch, capsys):
+    run_poker = load_script("run_poker")
+    monkeypatch.setattr(run_poker, "OllamaClient", FlippingOllama)
+    monkeypatch.setattr(run_poker, "get_model_digest", lambda model: "sha256:abc")
+    monkeypatch.setattr(run_poker, "get_ollama_version", lambda: "0.9.0")
+    monkeypatch.setattr(sys, "argv", ["run_poker.py", "--model", "fake:1b", "--setup", "tools", "--bot", "maniac",
+                                      "--pairs", "2", "--seed", "2026", "--out", str(tmp_path / "tools")])
+    assert run_poker.main() == 0
+    plain = play(monkeypatch, tmp_path / "plain")
+    capsys.readouterr()
+
+    assert load_script("analyze_poker").main([str(tmp_path / "tools"), str(plain), "--out", str(tmp_path / "results")]) == 0
+
+    printed = capsys.readouterr().out
+    assert "self-check flips" in printed
+    tools, plain_summary = json.loads((tmp_path / "results" / "summary.json").read_text())["runs"]
+    checked = tools["self_check"]
+    assert checked["flips"]["k"] == checked["flips"]["n"] > 0  # fold differs from every check or call
+    assert checked["first_pass_fallback"]["k"] == 0 and checked["final_fallback"]["k"] == 0
+    assert plain_summary["self_check"] is None
+    rows = list(csv.DictReader((tmp_path / "results" / "summary.csv").open()))
+    assert rows[0]["self_check_flip_rate"] == "1.0" and rows[1]["self_check_flip_rate"] == ""
+    assert rows[0]["first_pass_fallback_rate"] == "0.0"

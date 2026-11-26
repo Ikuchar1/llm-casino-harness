@@ -1,4 +1,5 @@
-"""Analyze poker match run directories: habit metrics, trend, bb/100, profile, fallbacks.
+"""Analyze poker match run directories: habit metrics, trend, bb/100, profile, fallbacks,
+and in the tools setups the self-check flips and the fallback rate before and after the re-check.
 
 Usage (from the repo root):
     .venv/bin/python scripts/analyze_poker.py runs/<match> [runs/<match2> ...] [--out results/poker]
@@ -65,6 +66,10 @@ def print_run(summary: dict[str, Any]) -> None:
     statuses = ", ".join(f"{status} {count}" for status, count in summary["parse_status"].items()) or "none"
     print(f"  fallback {_rate(summary['fallback'])}; parse status: {statuses}; "
           f"prompt tokens/decision {_num(summary['prompt_tokens_mean'], '.0f')}")
+    checked = summary.get("self_check")
+    if checked is not None:
+        print(f"  self-check flips {_rate(checked['flips'])}; fallback first pass {_rate(checked['first_pass_fallback'])}, "
+              f"after the re-check {_rate(checked['final_fallback'])}")
 
 
 def print_comparison(summary: dict[str, Any], a: dict[str, Any], b: dict[str, Any]) -> None:
@@ -95,6 +100,10 @@ def csv_row(summary: dict[str, Any]) -> dict[str, Any]:
                 "af_bets_raises": profile["af_bets_raises"], "af_calls": profile["af_calls"],
                 "wtsd": profile["wtsd"]["rate"], "fallback_rate": summary["fallback"]["rate"],
                 "prompt_tokens_mean": summary["prompt_tokens_mean"]})
+    checked = summary.get("self_check") or {}
+    row.update({"self_check_flips": checked.get("flips", {}).get("k"),
+                "self_check_flip_rate": checked.get("flips", {}).get("rate"),
+                "first_pass_fallback_rate": checked.get("first_pass_fallback", {}).get("rate")})
     return row
 
 
