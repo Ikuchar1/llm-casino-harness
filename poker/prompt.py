@@ -16,7 +16,8 @@ from poker.engine import (
 )
 
 # Bump this whenever any prompt text changes; it is logged and checked on resume.
-PROMPT_VERSION = "poker-v1"
+# v2: the answer format asks for the exact menu name, says bets use the raise_* names, gives an example.
+PROMPT_VERSION = "poker-v2"
 
 # The memory hook's block heading. Prompts without notes never contain it.
 NOTES_HEADER = "Your notes on this opponent from earlier hands:"
@@ -30,7 +31,9 @@ _SIZE_WORDS = {RAISE_HALF_POT: "half pot", RAISE_POT: "pot", ALL_IN: "all-in"}
 
 FORMAT_INSTRUCTION = (
     "First explain your reasoning in two or three sentences. Then end your reply with a final line "
-    "of exactly the form `ACTION: <action name>`, using one action name from the numbered list."
+    "of exactly the form `ACTION: <action name>`, using the exact action name of one item in the "
+    "numbered list. To bet or raise, answer with raise_half_pot, raise_pot or all_in, never \"bet\". "
+    "For example: ACTION: raise_half_pot"
 )
 
 

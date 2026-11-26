@@ -1,7 +1,7 @@
 """Tests for the poker decision prompt (poker/prompt.py)."""
 
 from poker.engine import Action, DecisionState, MenuItem
-from poker.prompt import NOTES_HEADER, build_system_prompt, build_user_prompt, notes_block
+from poker.prompt import FORMAT_INSTRUCTION, NOTES_HEADER, build_system_prompt, build_user_prompt, notes_block
 
 
 def flop_state():
@@ -26,6 +26,14 @@ def test_the_system_prompt_states_the_rules_and_the_answer_line():
     assert "1/2" in system and "100 big blinds" in system
     assert "reset" in system
     assert "ACTION: <action name>" in system
+
+
+def test_the_answer_format_asks_for_the_exact_menu_name_says_bets_use_the_raise_names_and_gives_an_example():
+    assert "exact action name" in FORMAT_INSTRUCTION
+    assert "raise_half_pot" in FORMAT_INSTRUCTION and "raise_pot" in FORMAT_INSTRUCTION
+    assert "never \"bet\"" in FORMAT_INSTRUCTION
+    assert "For example: ACTION: raise_half_pot" in FORMAT_INSTRUCTION
+    assert build_system_prompt().rstrip().endswith(FORMAT_INSTRUCTION)
 
 
 def test_the_decision_prompt_shows_the_cards_street_pot_stacks_and_amount_to_call():
