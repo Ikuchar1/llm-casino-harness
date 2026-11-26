@@ -213,10 +213,10 @@ def test_the_tools_setups_record_the_tool_versions_and_the_re_check_texts_in_the
         "system_prompt", "prompt_version", "parser_version"}
 
 
-def facing_a_shove(replies):
+def facing_a_shove(replies, seed=1):
     """The model in the big blind facing the button's all-in (menu fold / call); returns its decision and detail."""
     player = PokerLLMPlayer(FakeChatClient(replies), SETUPS["tools"])
-    record = play_hand(seed=1, players={"model": player, "bot": OneActionPlayer("all_in")}, button="bot")
+    record = play_hand(seed=seed, players={"model": player, "bot": OneActionPlayer("all_in")}, button="bot")
     decision, = [d for d in record.decisions if d.player == "model"]
     detail, = player.take_hand_details()
     return decision, detail
@@ -256,3 +256,13 @@ def test_a_re_check_that_renames_the_same_applied_action_is_not_a_flip():
 
     assert (decision.choice, decision.action) == ("call", "call")
     assert (detail.self_check["final_action"], detail.self_check["flipped"]) == ("call", False)
+
+
+def test_a_first_all_in_applied_as_the_call_gets_the_call_below_pot_odds_flag():
+    from poker.self_check import CALL_BELOW_ODDS
+
+    # Seed 3 deals the big blind 2s6s: 36.9% equity against the 49.5% the call needs.
+    decision, detail = facing_a_shove(["ACTION: all_in", "ACTION: all_in"], seed=3)
+
+    assert decision.state.hole_cards == ("2s", "6s") and (decision.choice, decision.action) == ("all_in", "call")
+    assert detail.flags == [CALL_BELOW_ODDS.format(equity="36.9%", needed="49.5%")]

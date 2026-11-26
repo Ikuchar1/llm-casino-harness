@@ -68,7 +68,11 @@ HIGH_EQUITY_FOLD = "You are folding with {equity} equity against a random hand."
 
 
 def flags(state: DecisionState, action: Optional[str], info: EquityInfo) -> list[str]:
-    """The harness's warnings about a first answer (empty when nothing looks wrong)."""
+    """The harness's warnings about a first answer (empty when nothing looks wrong).
+
+    `action` is the menu action the engine applies for that answer (DecisionState.applied_action),
+    so an all_in applied as the call is checked as a call.
+    """
     can_check = any(item.action == CHECK for item in state.menu)
     warnings = []
     if action == FOLD and can_check:

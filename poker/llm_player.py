@@ -105,7 +105,7 @@ class PokerLLMPlayer:
         self_check, warnings = None, None
         if self.config.self_evaluation:
             # flags() is a logged-only diagnostic: the re-check stays generic (CONTEXT.md).
-            warnings = flags(state, result.action, info)
+            warnings = flags(state, state.applied_action(choice), info)
             self_check, second = self._re_check(state, user_prompt, reply.content, result, choice)
             second_choice = _usable(second, state)
             if second_choice is not None:

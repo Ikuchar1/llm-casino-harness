@@ -340,7 +340,7 @@ def output_quality(rows: list[Row]) -> OutputQuality:
 class SelfCheckSummary:
     """The tools setups' re-check, over the model's re-checked decisions.
 
-    flips: the re-check changed the action played (final != first answer).
+    flips: the re-check changed the action the engine applied (a renamed same action, e.g. all_in then call facing a shove, is not a flip).
     first_pass_fallback: the first answer named nothing the engine applies (no menu action
     and no off-menu name it still applies): the fallback rate the first pass alone would have had.
     final_fallback: the answer played fell back, as in output_quality.
