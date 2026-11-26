@@ -61,6 +61,16 @@ class MenuItem:
 
 
 @dataclass(frozen=True)
+class Action:
+    """One action taken this hand. `amount` is chips called or the raise-to total."""
+
+    street: str
+    seat: str
+    action: str
+    amount: int
+
+
+@dataclass(frozen=True)
 class DecisionState:
     """Everything a player sees at one decision. Frozen so logged snapshots never change."""
 
@@ -73,6 +83,7 @@ class DecisionState:
     opponent_stack: int
     to_call: int
     is_button: bool
+    history: tuple[Action, ...]  # every action this hand so far, oldest first (blinds not included)
     menu: tuple[MenuItem, ...]
 
 
@@ -109,7 +120,9 @@ class HandRecord:
     """One finished hand. Plain values only, so dataclasses.asdict gives JSON-ready data."""
 
     seed: int
+    hand_number: int  # position in the match, from 0
     button: str  # name of the player on the button
+    seats: dict[str, str]  # seat ("button", "big_blind") -> player name
     hole_cards: dict[str, list[str]]  # player name -> their two cards
     board: list[str]
     showdown: bool
@@ -117,7 +130,9 @@ class HandRecord:
     decisions: list[DecisionRecord]
 
 
-def play_hand(seed: int, players: dict[str, Player], button: str, deck: Optional[list[str]] = None) -> HandRecord:
+def play_hand(
+    seed: int, players: dict[str, Player], button: str, hand_number: int = 0, deck: Optional[list[str]] = None
+) -> HandRecord:
     """Play one hand. `players` maps two names to players; `button` names the one on the button.
 
     The cards come from make_deck(seed) unless a stacked `deck` is given (tests).
@@ -135,12 +150,13 @@ def play_hand(seed: int, players: dict[str, Player], button: str, deck: Optional
     state.deal_hole("".join(hole[BUTTON]))
     board: list[str] = []
     decisions: list[DecisionRecord] = []
+    history: list[Action] = []
 
     while state.status:
         if state.actor_index is not None:
             seat = BUTTON if state.actor_index == _POKERKIT_INDEX[BUTTON] else BIG_BLIND_SEAT
             menu, clamps = _menu(state)
-            snapshot = _decision_state(state, seat, hole[seat], board, menu)
+            snapshot = _decision_state(state, seat, hole[seat], board, history, menu)
             choice = players[seat_names[seat]].decide(snapshot)
             item = next((item for item in menu if item.action == choice), None)
             fallback = item is None
@@ -150,6 +166,7 @@ def play_hand(seed: int, players: dict[str, Player], button: str, deck: Optional
                 player=seat_names[seat], state=snapshot, choice=choice, action=item.action,
                 amount=item.amount, fallback=fallback, clamps=clamps,
             ))
+            history.append(Action(snapshot.street, seat, item.action, item.amount))
             if item.action == FOLD:
                 state.fold()
             elif item.action in (CHECK, CALL):
@@ -167,7 +184,9 @@ def play_hand(seed: int, players: dict[str, Player], button: str, deck: Optional
     showdown = not any(type(op).__name__ == "Folding" for op in state.operations)
     return HandRecord(
         seed=seed,
+        hand_number=hand_number,
         button=button,
+        seats=dict(seat_names),
         hole_cards={seat_names[seat]: hole[seat] for seat in SEATS},
         board=board,
         showdown=showdown,
@@ -176,7 +195,37 @@ def play_hand(seed: int, players: dict[str, Player], button: str, deck: Optional
     )
 
 
-def _decision_state(state, seat: str, hole_cards: list[str], board: list[str], menu: list[MenuItem]) -> DecisionState:
+def play_duplicate(
+    seed: int, players: dict[str, Player], first_button: str, first_hand_number: int = 0
+) -> tuple[HandRecord, HandRecord]:
+    """Deal one seeded deck twice with the players swapped between seats (decision 5).
+
+    The cards stay with the seat, so on the second deal each player holds the cards
+    the other held on the first.
+    """
+    second_button = next(name for name in players if name != first_button)
+    return (
+        play_hand(seed, players, button=first_button, hand_number=first_hand_number),
+        play_hand(seed, players, button=second_button, hand_number=first_hand_number + 1),
+    )
+
+
+def play_match(seeds: list[int], players: dict[str, Player]) -> list[HandRecord]:
+    """Play every seed as a duplicate pair: 2 x len(seeds) hands.
+
+    The first player named in `players` is on the button for the first deal of every
+    pair, so the button alternates every hand.
+    """
+    first_button = next(iter(players))
+    hands: list[HandRecord] = []
+    for index, seed in enumerate(seeds):
+        hands.extend(play_duplicate(seed, players, first_button, first_hand_number=2 * index))
+    return hands
+
+
+def _decision_state(
+    state, seat: str, hole_cards: list[str], board: list[str], history: list[Action], menu: list[MenuItem]
+) -> DecisionState:
     me = _POKERKIT_INDEX[seat]
     to_call = state.checking_or_calling_amount
     return DecisionState(
@@ -189,6 +238,7 @@ def _decision_state(state, seat: str, hole_cards: list[str], board: list[str], m
         opponent_stack=state.stacks[1 - me],
         to_call=to_call,
         is_button=seat == BUTTON,
+        history=tuple(history),
         menu=tuple(menu),
     )
 

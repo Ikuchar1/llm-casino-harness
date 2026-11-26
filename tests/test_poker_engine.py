@@ -5,7 +5,7 @@ button hole cards, big blind hole cards, burn, flop (3), burn, turn, burn, river
 """
 
 from poker.cards import make_deck
-from poker.engine import play_hand
+from poker.engine import play_duplicate, play_hand, play_match
 
 
 class ScriptedPlayer:
@@ -165,3 +165,80 @@ def test_no_answer_at_all_is_also_a_fallback():
     _, _, record = first_states(button_choices=[None])
 
     assert (record.decisions[0].choice, record.decisions[0].action, record.decisions[0].fallback) == (None, "fold", True)
+
+
+# ---------- What the player sees ----------
+
+
+def test_a_player_on_the_flop_sees_the_board_the_street_and_the_actions_so_far_this_hand():
+    deck = stacked(["As", "Ah"], ["Kc", "Kd"], ["2c", "7h", "9s", "Jd", "3s"])
+    button, big_blind = ScriptedPlayer(["call"]), ScriptedPlayer(["check", "raise_half_pot"])
+    play_hand(seed=0, players=heads_up(button, big_blind), button="hero", deck=deck)
+
+    flop = button.states[1]
+    assert flop.street == "flop"
+    assert flop.board == ("2c", "7h", "9s")
+    assert flop.hole_cards == ("As", "Ah")
+    assert flop.is_button is True
+    assert (flop.pot, flop.to_call, flop.stack, flop.opponent_stack) == (6, 2, 198, 196)
+    assert [(a.street, a.seat, a.action, a.amount) for a in flop.history] == [
+        ("preflop", "button", "call", 1),
+        ("preflop", "big_blind", "check", 0),
+        ("flop", "big_blind", "raise_half_pot", 2),
+    ]
+
+
+# ---------- Stacks and scoring ----------
+
+
+def test_every_hand_starts_from_fresh_200_chip_stacks_even_after_a_player_lost_everything():
+    deck = stacked(["As", "Ah"], ["Kc", "Kd"], ["2c", "7h", "9s", "Jd", "3s"])
+    button, big_blind = ScriptedPlayer(["all_in"]), ScriptedPlayer(["call"])
+    busted = play_hand(seed=0, players=heads_up(button, big_blind), button="hero", deck=deck)
+    next_hand = play_hand(seed=0, players=heads_up(button, big_blind), button="hero", deck=deck)
+
+    assert busted.chip_delta == {"hero": 200, "villain": -200}
+    assert (button.states[1].stack, button.states[1].opponent_stack) == (199, 198)  # blinds 1/2 posted
+    assert next_hand.chip_delta == {"hero": 2, "villain": -2}
+
+
+# ---------- Duplicate dealing ----------
+
+
+def test_a_duplicate_pair_swaps_the_players_between_seats_and_the_cards_stay_with_the_seat():
+    first, second = play_duplicate(seed=5, players=heads_up(), first_button="hero")
+
+    assert first.seats == {"button": "hero", "big_blind": "villain"}
+    assert second.seats == {"button": "villain", "big_blind": "hero"}
+    assert first.hole_cards["hero"] == second.hole_cards["villain"]
+    assert first.hole_cards["villain"] == second.hole_cards["hero"]
+    assert first.board == second.board
+    assert first.seed == second.seed == 5
+
+
+def test_in_a_duplicate_pair_each_player_holds_each_seats_cards_once():
+    first, second = play_duplicate(seed=9, players=heads_up(), first_button="villain")
+
+    for name in ("hero", "villain"):
+        held = sorted([tuple(first.hole_cards[name]), tuple(second.hole_cards[name])])
+        seat_cards = sorted([tuple(first.hole_cards[first.seats[seat]]) for seat in ("button", "big_blind")])
+        assert held == seat_cards
+
+
+# ---------- Match ----------
+
+
+def test_a_match_plays_every_seed_as_a_duplicate_pair_with_the_button_alternating_every_hand():
+    hands = play_match(seeds=[11, 12, 13], players=heads_up())
+
+    assert len(hands) == 6
+    assert [hand.hand_number for hand in hands] == [0, 1, 2, 3, 4, 5]
+    assert [hand.seed for hand in hands] == [11, 11, 12, 12, 13, 13]
+    assert [hand.button for hand in hands] == ["hero", "villain"] * 3
+
+
+def test_every_hand_of_a_match_has_chip_deltas_that_sum_to_zero():
+    hands = play_match(seeds=list(range(20)), players=heads_up(ScriptedPlayer(["raise_pot"] * 10), ScriptedPlayer(["call"] * 10)))
+
+    assert all(sum(hand.chip_delta.values()) == 0 for hand in hands)
+    assert any(hand.chip_delta["hero"] != 0 for hand in hands)
