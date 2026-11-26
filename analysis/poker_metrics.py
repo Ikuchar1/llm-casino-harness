@@ -341,8 +341,8 @@ class SelfCheckSummary:
     """The tools setups' re-check, over the model's re-checked decisions.
 
     flips: the re-check changed the action played (final != first answer).
-    first_pass_fallback: the first answer named no menu action (the fallback rate the
-    first pass alone would have had, up to an off-menu name the engine still applied).
+    first_pass_fallback: the first answer named nothing the engine applies (no menu action
+    and no off-menu name it still applies): the fallback rate the first pass alone would have had.
     final_fallback: the answer played fell back, as in output_quality.
     """
 

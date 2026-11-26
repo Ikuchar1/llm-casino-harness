@@ -239,3 +239,13 @@ def test_a_first_answer_naming_a_raise_the_engine_applies_as_the_call_is_not_a_f
     assert detail.self_check["first_action"] == "all_in"
     assert detail.self_check["recheck_prompt"] == recheck_prompt("all_in")
     assert detail.self_check["flipped"] is False
+
+
+def test_an_unusable_first_answer_then_a_re_check_naming_a_raise_the_engine_applies_as_the_call_plays_that_raise():
+    from poker.self_check import RECHECK_PROMPT_INVALID
+
+    decision, detail = facing_a_shove(["no idea", "ACTION: all_in"])
+
+    assert (decision.choice, decision.action, decision.fallback, decision.clamped) == ("all_in", "call", False, True)
+    assert detail.self_check["recheck_prompt"] == RECHECK_PROMPT_INVALID
+    assert (detail.self_check["first_action"], detail.self_check["final_action"]) == (None, "all_in")

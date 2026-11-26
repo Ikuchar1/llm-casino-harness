@@ -6,8 +6,9 @@ The player keeps a PokerDecisionDetail for every decision (prompt, raw reply, pa
 result, timing); the runner merges them into the decision log rows.
 
 In the full-tools setups every decision gets one more turn in the same conversation,
-the generic re-check (poker.self_check); its menu action, if it named one, is played,
-else the first answer. With self-evaluation the parse fields describe the answer played,
+the generic re-check (poker.self_check); its choice is played if the engine applies it
+(a menu action, or an off-menu name like all_in when only fold and call are legal), else
+the first answer. The same rule decides whether the first answer counts as usable. With self-evaluation the parse fields describe the answer played,
 while raw_response and the call stats are the first call's (the second is in self_check).
 
 When the reply names a real action that is off the menu, decide() still returns that

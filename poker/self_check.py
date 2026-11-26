@@ -34,7 +34,7 @@ RECHECK_PROMPT_INVALID = (
 
 
 def recheck_prompt(first_action: Optional[str]) -> str:
-    """The generic, content-free re-check for a first answer (None = the first reply named no menu action)."""
+    """The generic, content-free re-check for a first answer (None = it named nothing the engine applies)."""
     if first_action is None:
         return RECHECK_PROMPT_INVALID
     return RECHECK_PROMPT.format(first_action=first_action)
@@ -44,8 +44,9 @@ def final_choice(first: Optional[str], second: Optional[str]) -> Optional[str]:
     """The answer played: the re-check's menu action, or the first answer when the re-check named none.
 
     `first` is what the first reply would have played (its menu action, or the off-menu
-    action it named, or None); `second` is the re-check's menu action or None. As in
-    blackjack, a bad second reply never throws away a usable first one.
+    action it named, or None); `second` is the re-check's usable choice (a menu action or
+    an off-menu name the engine still applies, DecisionState.applied_action) or None. As
+    in blackjack, a bad second reply never throws away a usable first one.
     """
     return second if second is not None else first
 
