@@ -17,6 +17,7 @@ from poker.memory import (
     CONFIRMED,
     HAND_FREQUENCY_THRESHOLD,
     LEAK_THRESHOLD,
+    MEMORY_VERSION,
     MAX_AGAINST_SHARE,
     NOTES_BLOCK_CHAR_CAP,
     TENTATIVE,
@@ -181,12 +182,26 @@ def test_the_tally_text_lists_only_the_side_of_each_pair_the_calling_station_did
     text = tally.render()
 
     faced = sum(tally.counts("faced_bet.continue"))
-    assert f"faced_bet.continue {faced} of {faced}" in text
-    assert f"faced_bet.no_raise {faced} of {faced}" in text
+    assert f"key faced_bet.continue | for {faced} | against 0" in text
+    assert f"key faced_bet.no_raise | for {faced} | against 0" in text
     assert "faced_bet.continue.flop" in text
     assert "faced_bet.raise" not in text and "faced_bet.fold" not in text
     assert "checked_to.check" in text and "checked_to.bet" not in text
     assert "faced_bet.call" in text  # not one of a pair: listed as before
+
+
+def test_the_tally_text_lists_each_key_on_its_own_line_as_a_ready_to_copy_citation_with_its_true_counts():
+    tally = tally_of(*station_match())
+
+    lines = tally.render().splitlines()
+
+    faced = sum(tally.counts("faced_bet.continue"))
+    assert f"  key faced_bet.continue | for {faced} | against 0" in lines
+    cited = [line.strip() for line in lines if re.search(r"\b(preflop|faced_bet|checked_to|showdown)\.[a-z_]", line)]
+    assert cited and all(re.fullmatch(r"key [a-z_.]+ \| for \d+ \| against \d+", line) for line in cited)
+    for line in cited:
+        key, for_count, against = re.fullmatch(r"key (\S+) \| for (\d+) \| against (\d+)", line).groups()
+        assert tally.counts(key) == (int(for_count), int(against))
 
 
 def test_the_tally_text_lists_no_vpip_and_not_vpip_for_a_rock_that_plays_few_hands():
@@ -197,7 +212,7 @@ def test_the_tally_text_lists_no_vpip_and_not_vpip_for_a_rock_that_plays_few_han
 
     text = tally.render()
 
-    assert f"preflop.no_vpip {skipped} of {played + skipped}" in text
+    assert f"key preflop.no_vpip | for {skipped} | against {played}" in text
     assert "preflop.vpip" not in text
 
 
@@ -207,7 +222,7 @@ def test_the_tally_text_lists_both_sides_of_a_pair_that_is_tied():
 
     text = tally_of(called, folded).render()
 
-    assert "preflop.vpip 1 of 2" in text and "preflop.no_vpip 1 of 2" in text
+    assert "key preflop.vpip | for 1 | against 1" in text and "key preflop.no_vpip | for 1 | against 1" in text
 
 
 # ---------- Hypotheses and notes ----------
@@ -394,7 +409,7 @@ def test_the_rewrite_prompt_shows_the_labelled_old_notes_the_tally_the_last_hand
     prompt = build_rewrite_prompt(PREVIOUS, tally, records[-5:], "hero")
 
     assert "previous notes; revise or discard based on the counts below" in prompt.lower()
-    assert PREVIOUS.hypotheses[0].cited_line() in prompt
+    assert "plays every hand | key preflop.vpip | for " in prompt  # with the current counts (tested below)
     assert tally.render() in prompt
     for record in records[-5:]:
         assert render_hand(record, "hero") in prompt
@@ -416,6 +431,45 @@ def test_the_rewrite_prompt_says_to_cite_the_key_whose_outcome_supports_the_read
         ("plays very few hands", "preflop.no_vpip"),
     ):
         assert f'"{read}" cites {key}' in prompt
+
+
+def test_the_previous_notes_in_the_next_rewrite_prompt_carry_the_current_counts_not_the_ones_they_were_written_with():
+    records = station_match()
+    memory = MemoryState("hero")
+    for record in records[:6]:
+        memory.observe(record)
+    early = memory.tally.counts("faced_bet.continue")
+    memory.apply_rewrite(f"never folds to bets | key faced_bet.continue | for {early[0]} | against {early[1]}")
+    for record in records[6:10]:
+        memory.observe(record)
+    now = memory.tally.counts("faced_bet.continue")
+    assert now != early
+
+    previous = memory.rewrite_prompt().split("revise or discard based on the counts below:\n")[1].split("\n\n")[0]
+
+    assert previous.splitlines() == [
+        f"never folds to bets | key faced_bet.continue | for {now[0]} | against {now[1]}"
+        f" | {status_for('faced_bet.continue', *now)}"
+    ]
+
+
+def test_a_reply_that_copies_a_tally_line_from_the_rewrite_prompt_verbatim_verifies_with_no_mismatch():
+    memory = MemoryState("hero")
+    for record in station_match()[:10]:
+        memory.observe(record)
+    prompt = memory.rewrite_prompt()
+    tally_line = next(line for line in prompt.splitlines() if line.strip().startswith("key faced_bet.continue |"))
+
+    event = memory.apply_rewrite(f"never folds to bets | {tally_line.strip()}")
+
+    assert "after your text, copy one key line from the tally exactly as written" in prompt
+    assert '"key X of N"' not in prompt
+    assert not event.flags["count_mismatch"] and not event.flags["unverifiable"]
+    assert memory.notes.hypotheses[0].status == CONFIRMED
+
+
+def test_the_memory_version_is_memory_v3_since_the_tally_lines_and_previous_notes_changed():
+    assert MEMORY_VERSION == "memory-v3"
 
 
 def test_the_first_rewrite_prompt_says_there_are_no_previous_notes():
