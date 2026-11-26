@@ -128,3 +128,41 @@ def test_each_bot_gets_its_own_habit_metrics_with_the_direction_an_exploit_moves
     assert all(habit.target is None for habit in control.values())  # descriptive: no exploit target
     assert (station["bluff_rate"].rate.k, station["bluff_rate"].rate.n) == (1, 1)
     assert (rock["fold_to_bet_rate"].rate.k, rock["fold_to_bet_rate"].rate.n) == (1, 1)
+
+
+def test_a_habit_rate_carries_the_wilson_interval():
+    # Newcombe (1998), example (a): 81/263 has the Wilson 95% interval 0.2553 to 0.3662.
+    rows = [decision(AIR, "raise_pot")] * 81 + [decision(NUTS, "raise_pot")] * 182
+
+    rate = pm.bluff_rate(rows)
+
+    assert (rate.k, rate.n) == (81, 263)
+    assert (rate.low, rate.high) == (pytest.approx(0.2553, abs=1e-4), pytest.approx(0.3662, abs=1e-4))
+
+
+def test_the_difference_of_two_independent_rates_has_newcombes_hybrid_score_interval():
+    # Newcombe (1998b), example (a): 56/70 - 48/80 = 0.2000, 95% CI 0.0524 to 0.3339.
+    diff = pm.rate_difference(pm.Proportion(48, 80), pm.Proportion(56, 70))
+
+    assert diff.difference == pytest.approx(0.2)
+    assert (diff.low, diff.high) == (pytest.approx(0.0524, abs=1e-4), pytest.approx(0.3339, abs=1e-4))
+
+
+def test_trend_windows_are_the_first_100_and_last_500_hands_scaled_down_for_a_short_match():
+    assert pm.trend_windows(1000) == (100, 500)
+    assert pm.trend_windows(60) == (10, 50)
+    assert pm.trend_windows(60, first_hands=20, last_hands=20) == (20, 20)
+
+
+def test_the_trend_compares_a_habit_in_the_first_hands_with_the_last_hands():
+    # 12 hands, windows of 4 and 4: hands 0-3 bluff every bet, hands 8-11 bluff one in four.
+    early = [decision(AIR, "raise_pot", hand_number=h) for h in range(4)]
+    middle = [decision(AIR, "raise_pot", hand_number=h) for h in range(4, 8)]  # in neither window
+    late = [decision(AIR if h == 8 else NUTS, "raise_pot", hand_number=h) for h in range(8, 12)]
+
+    trends = pm.habit_trends(early + middle + late, "calling_station", n_hands=12, first_hands=4, last_hands=4)
+
+    bluff = trends["bluff_rate"]
+    assert (bluff.before.k, bluff.before.n, bluff.after.k, bluff.after.n) == (4, 4, 1, 4)
+    assert bluff.difference == pytest.approx(-0.75)
+    assert bluff.low < -0.75 < bluff.high

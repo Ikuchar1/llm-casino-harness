@@ -8,6 +8,7 @@ the cards so the same spot always gets the same number.
 """
 
 import hashlib
+import math
 import random
 from dataclasses import dataclass
 from functools import lru_cache
@@ -132,5 +133,65 @@ class Habit:
 
 def habit_metrics(rows: list[Row], bot: str) -> dict[str, Habit]:
     """The bot's habit metrics over these rows. An unknown bot gets every metric, descriptive."""
-    targets = EXPLOIT_TARGETS.get(bot, EXPLOIT_TARGETS["control"])
-    return {name: Habit(name, HABIT_FUNCTIONS[name](rows), target) for name, target in targets.items()}
+    return {name: Habit(name, HABIT_FUNCTIONS[name](rows), target) for name, target in _targets(bot).items()}
+
+
+def _targets(bot: str) -> dict[str, Optional[str]]:
+    return EXPLOIT_TARGETS.get(bot, EXPLOIT_TARGETS["control"])
+
+
+@dataclass(frozen=True)
+class RateDifference:
+    """after.rate - before.rate for two independent rates, with a 95% CI."""
+
+    before: Proportion
+    after: Proportion
+    low: float
+    high: float
+
+    @property
+    def difference(self) -> float:
+        return self.after.rate - self.before.rate
+
+
+def rate_difference(before: Proportion, after: Proportion) -> RateDifference:
+    """after - before with Newcombe's hybrid score interval for independent proportions
+    (Newcombe 1998, method 10): each rate's Wilson interval, combined. nan if either is empty.
+    """
+    if not before.n or not after.n:
+        return RateDifference(before, after, math.nan, math.nan)
+    diff = after.rate - before.rate
+    low = diff - math.sqrt((after.rate - after.low) ** 2 + (before.high - before.rate) ** 2)
+    high = diff + math.sqrt((after.high - after.rate) ** 2 + (before.rate - before.low) ** 2)
+    return RateDifference(before, after, low, high)
+
+
+# 2. Trend within a match -------------------------------------------------------------
+
+FIRST_HANDS = 100  # the early window: hands before memory has much to go on
+LAST_HANDS = 500  # the late window of a 1,000-hand match
+
+
+def trend_windows(n_hands: int, first_hands: int = FIRST_HANDS, last_hands: int = LAST_HANDS) -> tuple[int, int]:
+    """(first, last) window sizes in hands. When the two don't fit in n_hands, both
+    shrink by the same factor (60 hands -> 10 and 50), so the windows never overlap.
+    """
+    if first_hands + last_hands <= n_hands:
+        return first_hands, last_hands
+    scale = n_hands / (first_hands + last_hands)
+    first = int(first_hands * scale)
+    return first, int(last_hands * scale)
+
+
+def habit_trends(rows: list[Row], bot: str, n_hands: int, first_hands: int = FIRST_HANDS,
+                 last_hands: int = LAST_HANDS) -> dict[str, RateDifference]:
+    """Each habit metric in the last window minus the first window (Newcombe CI).
+
+    Hands are numbered 0..n_hands-1; the first window is the lowest hand numbers and
+    the last window the highest, sized by trend_windows.
+    """
+    first, last = trend_windows(n_hands, first_hands, last_hands)
+    early = [row for row in rows if row["hand_number"] < first]
+    late = [row for row in rows if row["hand_number"] >= n_hands - last]
+    return {name: rate_difference(HABIT_FUNCTIONS[name](early), HABIT_FUNCTIONS[name](late))
+            for name in _targets(bot)}
