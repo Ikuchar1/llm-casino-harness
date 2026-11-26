@@ -22,7 +22,7 @@ from typing import Any, Optional
 from agent.config import HarnessConfig
 from agent.ollama_client import ChatClient, ChatReply
 from poker.engine import DecisionState
-from poker.equity_info import EQUITY_SAMPLES, EquityInfo, equity_info
+from poker.equity_info import EQUITY_SAMPLES, EQUITY_VERSION, EquityInfo, equity_info
 from poker.memory import REWRITE_SYSTEM_PROMPT
 from poker.parser import PARSER_VERSION, ParseResult, parse_choice
 from poker.self_check import SELF_CHECK_VERSION, final_choice, flags, recheck_prompt
@@ -47,6 +47,7 @@ def tools_settings(config: HarnessConfig) -> Optional[dict[str, Any]]:
     """The tool versions a run records and a resume must match (None = no tool on; a key per tool on)."""
     settings = {}
     if config.probability_tool:
+        settings["equity_version"] = EQUITY_VERSION
         settings["equity_samples"] = EQUITY_SAMPLES
     if config.strategy_info:
         settings["preflop_chart_version"] = PREFLOP_CHART_VERSION

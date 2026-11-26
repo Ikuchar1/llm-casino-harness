@@ -200,13 +200,13 @@ def test_the_harness_flags_are_logged_from_the_first_answer_but_never_shown_to_t
 
 
 def test_the_tools_setups_record_the_tool_versions_and_the_re_check_texts_in_the_run_metadata():
-    from poker.equity_info import EQUITY_SAMPLES
+    from poker.equity_info import EQUITY_SAMPLES, EQUITY_VERSION
     from poker.preflop_chart import PREFLOP_CHART_VERSION
     from poker.self_check import RECHECK_PROMPT_INVALID, SELF_CHECK_VERSION, recheck_prompt
 
     metadata = PokerLLMPlayer(FakeChatClient([]), SETUPS["tools"]).run_metadata()
 
-    assert metadata["tools"] == {"equity_samples": EQUITY_SAMPLES, "preflop_chart_version": PREFLOP_CHART_VERSION,
+    assert metadata["tools"] == {"equity_version": EQUITY_VERSION, "equity_samples": EQUITY_SAMPLES, "preflop_chart_version": PREFLOP_CHART_VERSION,
                                  "self_check_version": SELF_CHECK_VERSION}
     assert metadata["recheck_prompts"] == {"valid": recheck_prompt("<first action>"), "invalid": RECHECK_PROMPT_INVALID}
     assert set(PokerLLMPlayer(FakeChatClient([]), SETUPS["memory"]).run_metadata()) == {

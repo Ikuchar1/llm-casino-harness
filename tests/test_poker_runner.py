@@ -406,3 +406,19 @@ def test_resuming_a_tools_run_started_under_another_chart_version_is_refused_bef
     with pytest.raises(ValueError, match="cannot resume.*preflop-chart-v0"):
         tools_run(out, n_pairs=2)
     assert (out / "decisions.jsonl").read_text() == before
+
+
+def test_resuming_a_tools_run_started_under_another_equity_version_is_refused_before_anything_is_played(tmp_path):
+    from poker.equity_info import EQUITY_VERSION
+
+    out = tmp_path / "run"
+    tools_run(out, n_pairs=1)
+    metadata = json.loads((out / "metadata.json").read_text())
+    assert metadata["tools"]["equity_version"] == EQUITY_VERSION
+    metadata["tools"]["equity_version"] = "equity-v0"
+    (out / "metadata.json").write_text(json.dumps(metadata))
+    before = (out / "decisions.jsonl").read_text()
+
+    with pytest.raises(ValueError, match="cannot resume.*equity-v0"):
+        tools_run(out, n_pairs=2)
+    assert (out / "decisions.jsonl").read_text() == before

@@ -14,6 +14,10 @@ from typing import Optional
 from poker.engine import DecisionState
 from poker.hands import equity_vs_random
 
+# Bump if the block text, the seed or the samples change; it is recorded in the run
+# metadata and checked on resume.
+EQUITY_VERSION = "equity-v1"
+
 # 2000 samples: about 30 ms a decision, standard error under 1.2 percentage points.
 EQUITY_SAMPLES = 2000
 
