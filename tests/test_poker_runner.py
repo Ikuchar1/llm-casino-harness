@@ -176,6 +176,16 @@ def test_resuming_a_run_started_under_the_poker_v2_prompt_is_refused_because_of_
     assert len(json.loads((out / "metadata.json").read_text())["sessions"]) == 1
 
 
+def test_resuming_a_run_started_under_the_v2_parser_is_refused_because_bare_raises_now_parse(tmp_path):
+    out = tmp_path / "run"
+    run(out, n_pairs=1)
+    metadata = json.loads((out / "metadata.json").read_text())
+    (out / "metadata.json").write_text(json.dumps({**metadata, "parser_version": "poker-parser-v2"}))
+
+    with pytest.raises(ValueError, match="cannot resume.*parser_version='poker-parser-v2', not 'poker-parser-v3'"):
+        run(out, n_pairs=2)
+
+
 def ollama_facts(digest, version="0.9.0"):
     return {"model_digest": digest, "ollama_version": version}
 

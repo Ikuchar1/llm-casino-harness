@@ -3,8 +3,8 @@
 Tried in order (docs/research/poker-eval-methods.md, "LLM handling"):
 1. JSON: the last {...} object in the reply with an "action" key.
 2. The ACTION line: the last `ACTION: <answer>` marker (":", "-" or "：").
-3. Loose: only when the last non-empty line is nothing but a full action name or a menu
-   number. Action words anywhere else in the reply are never used as a guess.
+3. Loose: only when the last non-empty line is nothing but a full action name, a raise
+   ("raise", "raise to 178") or a menu number. Action words anywhere else in the reply are never used as a guess.
 Nothing found -> "unparseable". A reply cut off by the token limit (done_reason
 "length") with no ACTION line -> "truncated_no_action", before any other step.
 
@@ -14,7 +14,9 @@ menu number (1 = the first item). A number counts only alone or followed by "." 
 a name after it must agree with the numbered item, else the answer is unparseable
 ("1/2 pot", "3-bet" and "2. fold" with call at 2 are all unparseable). A number past
 the end of the menu is off-menu. Synonyms are mapped only onto an item that is
-on the menu (SYNONYM_TARGETS), and the mapping is recorded.
+on the menu (SYNONYM_TARGETS), and the mapping is recorded. A raise the menu doesn't
+name ("raise", "raise_to_178", "raise to 178") is "clamped" to the nearest legal raise
+item, or, with no raise legal, to the call the engine applies for an off-menu pot raise.
 """
 
 import json
@@ -27,7 +29,9 @@ from poker.engine import MenuItem
 # Bump when the parsing rules change; logged and checked on resume.
 # v2: a number counts only alone or before "."/")"; loose only for a lone last line;
 #     cut-off replies with no ACTION line = truncated_no_action.
-PARSER_VERSION = "poker-parser-v2"
+# v3: a bare or sized raise ("raise", "raise_to_178") is clamped to a legal raise (or
+#     the call), no longer unparseable.
+PARSER_VERSION = "poker-parser-v3"
 
 OK = "ok"
 TRUNCATED = "truncated_no_action"
@@ -39,13 +43,20 @@ _MARKDOWN = re.compile(r"[*`]")
 # Loose step: the last non-empty line, when it is nothing but a full action name (never
 # a bare "pot") or a menu number.
 _LOOSE_LINE = re.compile(
-    r"check\s*(?:/|or)\s*call|raise[ _-]half[ _-]pot|raise[ _-]pot|all[ _-]?in|fold|check|call|#?\d+"
+    r"check\s*(?:/|or)\s*call|raise[ _-]half[ _-]pot|raise[ _-]pot|raise(?:[ _-]+to)?(?:[ _-]+\d+)?|all[ _-]?in|fold"
+    r"|check|call|#?\d+"
 )
 
 # A menu number as an answer: the number alone, or followed by "." or ")" and the rest.
 _MENU_NUMBER = re.compile(r"^\s*#?(\d+)\s*(?:[.)](.*))?$", re.DOTALL)
 
 CHECK_OR_CALL = "check/call"
+
+CLAMPED = "clamped"
+# The LLM menu's raise items, smallest first.
+RAISES = ("raise_half_pot", "raise_pot", "all_in")
+# A raise size the menu doesn't name: "raise 178", "raise_to_178", "raise to 178 chips".
+_RAISE_AMOUNT = re.compile(r"raise(?:[ _-]+to)?[ _-]+(\d+)(?![\d/%a-z])")
 
 # Synonyms, and the menu actions each may be mapped onto (first one on the menu wins).
 # A mapping is used only when the named action itself is not on the menu.
@@ -76,12 +87,14 @@ class ParseResult:
     """What the parser made of one reply.
 
     action: the menu action, or None when parsing failed.
-    status: "ok", "mapped" (a synonym was mapped onto a menu item), "off_menu" (a
+    status: "ok", "mapped" (a synonym was mapped onto a menu item), "clamped" (a raise
+        the menu doesn't name, clamped to a legal raise; action None and named
+        raise_half_pot when no raise is legal), "off_menu" (a
         recognised action that isn't on the menu), "unparseable", or
         "truncated_no_action" (cut off by the token limit before an ACTION line).
     method: which step read the answer ("json", "action_line", "loose"), None if none did.
     named: the action the reply named, canonical, even when it is off the menu.
-    mapping: for "mapped", what was mapped onto what, e.g. "check/call -> call".
+    mapping: for "mapped" and "clamped", what was mapped onto what, e.g. "check/call -> call".
     """
 
     action: Optional[str]
@@ -148,6 +161,8 @@ def _resolve(answer: str, menu: tuple[MenuItem, ...], method: str) -> ParseResul
     if words and words[0].isdigit():
         return _resolve_number(answer, actions, method)
     named = _phrase(words)
+    if named is None and words[:1] == ["raise"]:
+        return _resolve_raise(answer, menu, method)
     if named is None:
         return ParseResult(None, "unparseable", method)
     if named in actions:
@@ -156,6 +171,25 @@ def _resolve(answer: str, menu: tuple[MenuItem, ...], method: str) -> ParseResul
     if target is not None:
         return ParseResult(target, "mapped", method, named, f"{named} -> {target}")
     return ParseResult(None, "off_menu", method, named)
+
+
+def _resolve_raise(answer: str, menu: tuple[MenuItem, ...], method: str) -> ParseResult:
+    """A raise the menu doesn't name ("raise", "raise_to_178"): clamped to a legal raise.
+
+    With an amount, the raise item nearest to it (the smaller on a tie); without one,
+    the smallest raise item. With no raise on the menu (a player is all-in), it names
+    raise_half_pot off the menu, which the engine applies as the clamped call
+    (DecisionState.dropped), or falls back on when there is no call either.
+    """
+    raises = [item for item in menu if item.action in RAISES]
+    if not raises:
+        return ParseResult(None, CLAMPED, method, RAISES[0], f"{answer.strip()} -> {RAISES[0]}")
+    amount = _RAISE_AMOUNT.match(answer.strip().lower())
+    if amount is not None:
+        target = min(raises, key=lambda item: abs(item.amount - int(amount.group(1))))
+    else:
+        target = raises[0]
+    return ParseResult(target.action, CLAMPED, method, target.action, f"{answer.strip()} -> {target.action}")
 
 
 def _resolve_number(answer: str, actions: list[str], method: str) -> ParseResult:

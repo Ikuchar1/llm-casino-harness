@@ -63,7 +63,7 @@ class PokerDecisionDetail:
     user_prompt: str
     raw_response: str
     parsed_action: Optional[str]  # the menu action, None when parsing failed
-    parse_status: str  # "ok", "mapped", "off_menu", "unparseable" or "truncated_no_action"
+    parse_status: str  # "ok", "mapped", "clamped", "off_menu", "unparseable" or "truncated_no_action"
     parse_method: Optional[str]  # "json", "action_line", "loose", None
     named_action: Optional[str]  # what the reply named, even off the menu
     mapping: Optional[str]  # e.g. "check/call -> call"

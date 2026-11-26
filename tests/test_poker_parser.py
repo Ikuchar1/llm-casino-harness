@@ -53,6 +53,32 @@ def test_a_menu_number_past_the_end_of_the_menu_is_off_menu():
     assert (result.action, result.status) == (None, "off_menu")
 
 
+def test_a_raise_to_an_amount_off_the_menu_is_clamped_to_the_nearest_legal_raise_and_says_so():
+    # qwen2.5:7b's river answer facing a raise to 178, when its menu was fold, call 112, all_in 182.
+    shove_menu = (MenuItem("fold"), MenuItem("call", 112), MenuItem("all_in", 182))
+    river = parse_choice("I should raise for value.\nACTION: raise_to_178", shove_menu)
+    near_pot = parse_choice("ACTION: raise to 28", FACING_A_BET)
+
+    assert (river.action, river.status, river.named, river.mapping) == (
+        "all_in", "clamped", "all_in", "raise_to_178 -> all_in")
+    assert (near_pot.action, near_pot.status, near_pot.mapping) == ("raise_pot", "clamped", "raise to 28 -> raise_pot")
+
+
+def test_a_bare_raise_is_clamped_to_the_smallest_legal_raise():
+    for reply in ("ACTION: raise", '{"action": "Raise"}', "ACTION: raise 3x"):
+        result = parse_choice(reply, FACING_A_BET)
+        assert (result.action, result.status) == ("raise_half_pot", "clamped"), reply
+
+
+def test_a_raise_when_no_raise_is_legal_names_a_pot_raise_so_the_engine_clamps_it_to_the_call():
+    # Facing an all-in: the engine applies any pot raise name as the call (DecisionState.dropped).
+    facing_a_shove = (MenuItem("fold"), MenuItem("call", 150))
+    result = parse_choice("ACTION: raise to 300", facing_a_shove)
+
+    assert (result.action, result.status, result.named, result.mapping) == (
+        None, "clamped", "raise_half_pot", "raise to 300 -> raise_half_pot")
+
+
 def test_check_or_call_maps_onto_whichever_of_the_two_is_on_the_menu_and_says_so():
     facing = parse_choice("ACTION: check/call", FACING_A_BET)
     no_bet = parse_choice("ACTION: check or call", NO_BET)
@@ -71,6 +97,13 @@ def test_without_json_or_an_action_line_a_lone_action_name_on_the_last_line_is_r
     result = parse_choice("The opponent never folds, so I value bet.\nraise_pot", FACING_A_BET)
 
     assert (result.action, result.status, result.method) == ("raise_pot", "ok", "loose")
+
+
+def test_loosely_a_lone_raise_on_the_last_line_is_clamped_to_a_legal_raise():
+    for reply, action in (("I value bet.\nraise", "raise_half_pot"), ("I value bet.\nraise_to_28.", "raise_pot")):
+        result = parse_choice(reply, FACING_A_BET)
+        assert (result.action, result.status, result.method) == (action, "clamped", "loose"), reply
+    assert parse_choice("I will raise to 28 because the pot is big", FACING_A_BET).status == "unparseable"
 
 
 def test_action_words_in_free_text_are_never_used_as_a_guess():
