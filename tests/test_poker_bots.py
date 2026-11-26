@@ -111,3 +111,43 @@ def test_the_rock_folds_ace_jack_offsuit_preflop():
 
 def test_the_rock_raises_queens_two_thirds_pot_preflop():
     assert make_bot("rock").decide(state(hole_cards=("Qh", "Qc"), to_call=1)) == "raise_two_thirds_pot"
+
+
+def test_the_rock_checks_trash_in_the_big_blind_when_the_button_limps():
+    assert make_bot("rock").decide(state(hole_cards=("9c", "4d"), to_call=0, pot=4, is_button=False)) == "check"
+
+
+def test_the_rock_folds_middle_pair_to_a_flop_bet():
+    middle_pair = state(hole_cards=("Jh", "9c"), board=("Ks", "Jd", "4c"), street="flop", pot=20, to_call=8)
+
+    assert make_bot("rock").decide(middle_pair) == "fold"
+
+
+def test_the_rock_bets_top_pair_on_the_flop():
+    top_pair = state(hole_cards=("Kh", "9c"), board=("Ks", "Jd", "4c"), street="flop", pot=12, to_call=0)
+
+    assert make_bot("rock").decide(top_pair) == "raise_two_thirds_pot"
+
+
+def test_the_rock_bets_a_pocket_pair_above_the_board():
+    overpair = state(hole_cards=("Qh", "Qc"), board=("Js", "8d", "4c"), street="flop", pot=12, to_call=0)
+
+    assert make_bot("rock").decide(overpair) == "raise_two_thirds_pot"
+
+
+def test_the_rock_raises_a_flop_bet_with_bottom_two_pair_because_it_beats_top_pair():
+    two_pair = state(hole_cards=("Jh", "4h"), board=("Ks", "Jd", "4c"), street="flop", pot=20, to_call=8)
+
+    assert make_bot("rock").decide(two_pair) == "raise_two_thirds_pot"
+
+
+def test_the_rock_folds_when_its_only_pair_is_on_the_board():
+    board_pair = state(hole_cards=("9h", "8h"), board=("Ks", "Kd", "4c"), street="flop", pot=20, to_call=8)
+
+    assert make_bot("rock").decide(board_pair) == "fold"
+
+
+def test_the_rock_bets_a_flush_made_with_a_hole_card():
+    flush = state(hole_cards=("9h", "2h"), board=("Kh", "Jh", "4h", "Ac"), street="turn", pot=12, to_call=0)
+
+    assert make_bot("rock").decide(flush) == "raise_two_thirds_pot"

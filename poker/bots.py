@@ -10,6 +10,7 @@ from typing import Optional
 
 from poker.cards import RANKS
 from poker.engine import CALL, CHECK, FOLD, MIN_RAISE, RAISE_TWO_THIRDS_POT, DecisionState
+from poker.hands import TWO_PAIR, category
 
 
 class _Bot:
@@ -50,9 +51,8 @@ class Rock(_Bot):
     name = "rock"
 
     def decide(self, state: DecisionState) -> Optional[str]:
-        if _is_premium(state.hole_cards):
-            return _bet_or_call(state)
-        return _check_or_fold(state)
+        strong = _has_top_pair_or_better(state) if state.board else _is_premium(state.hole_cards)
+        return _bet_or_call(state) if strong else _check_or_fold(state)
 
 
 # Preflop premium range: TT+ and AQ+ (AQs, AQo, AKs, AKo).
@@ -82,6 +82,18 @@ def _can_raise(state: DecisionState) -> bool:
 
 def _check_or_call(state: DecisionState) -> str:
     return CALL if state.to_call else CHECK
+
+
+def _has_top_pair_or_better(state: DecisionState) -> bool:
+    """One hole card pairs the highest board card, a pocket pair above the board, or any
+    stronger made hand (two pair or better that the hole cards improve on the board's own).
+    """
+    top = max(RANKS.index(card[0]) for card in state.board)
+    hole = [RANKS.index(card[0]) for card in state.hole_cards]
+    if top in hole or (hole[0] == hole[1] and hole[0] > top):
+        return True
+    made = category([*state.hole_cards, *state.board])
+    return made >= TWO_PAIR and made > category(list(state.board))
 
 
 def _bet_or_call(state: DecisionState) -> str:
