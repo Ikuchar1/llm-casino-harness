@@ -91,7 +91,8 @@ class DecisionState:
     menu: tuple[MenuItem, ...]
     # Off-menu names the engine still applies (name, menu action): a raise dropped as a
     # duplicate of another item, or any raise when no raise is legal (applied as the call).
-    dropped: tuple[tuple[str, str], ...] = ()
+    # Not logged (the engine rebuilds it each decision), so not part of equality either.
+    dropped: tuple[tuple[str, str], ...] = field(default=(), compare=False)
 
     def applied_action(self, choice: Optional[str]) -> Optional[str]:
         """The menu action the engine applies for this choice, or None when it would fall back."""
