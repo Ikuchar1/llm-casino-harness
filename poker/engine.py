@@ -37,6 +37,10 @@ CALL = "call"
 RAISE_HALF_POT = "raise_half_pot"
 RAISE_POT = "raise_pot"
 ALL_IN = "all_in"
+# Bot-only sizes (decision 9's fixed 2/3-pot bet). Offered only to players with
+# `bot_sizing = True`, after the usual items, so the LLM's menu never changes.
+RAISE_TWO_THIRDS_POT = "raise_two_thirds_pot"
+MIN_RAISE = "min_raise"
 
 # Pot-size raises: raise-to = the bet being faced + fraction x (pot after calling).
 _POT_FRACTIONS = ((RAISE_HALF_POT, 0.5), (RAISE_POT, 1.0))
@@ -97,7 +101,10 @@ class Clamp:
 
 
 class Player(Protocol):
-    """Anything that can choose an action. Return the action name of one state.menu item."""
+    """Anything that can choose an action. Return the action name of one state.menu item.
+
+    A player may also set `bot_sizing = True` to get the bot-only sizes on its menu.
+    """
 
     def decide(self, state: DecisionState) -> Optional[str]: ...
 
@@ -156,9 +163,10 @@ def play_hand(
     while state.status:
         if state.actor_index is not None:
             seat = BUTTON if state.actor_index == _POKERKIT_INDEX[BUTTON] else BIG_BLIND_SEAT
-            menu, clamps = _menu(state)
+            player = players[seat_names[seat]]
+            menu, clamps = _menu(state, bot_sizing=getattr(player, "bot_sizing", False))
             snapshot = _decision_state(state, seat, hole[seat], board, history, menu)
-            choice = players[seat_names[seat]].decide(snapshot)
+            choice = player.decide(snapshot)
             item = next((item for item in menu if item.action == choice), None)
             fallback = item is None
             if fallback:
@@ -253,11 +261,13 @@ def _fallback_item(menu: list[MenuItem]) -> MenuItem:
     return by_action.get(CHECK) or by_action[FOLD]
 
 
-def _menu(state) -> tuple[list[MenuItem], list[Clamp]]:
+def _menu(state, bot_sizing: bool = False) -> tuple[list[MenuItem], list[Clamp]]:
     """The legal menu right now: fold, check or call, the pot-size raises, all-in.
 
     Raise sizes are clamped to PokerKit's min/max raise-to; a raise that clamps to an
     amount already on the menu (often the all-in) is dropped. Every clamp is returned.
+    With `bot_sizing`, a 2/3-pot raise and a min raise follow, clamped the same way but
+    never dropped and not recorded as clamps (those count the LLM's menu only).
     """
     to_call = state.checking_or_calling_amount
     menu = []
@@ -281,4 +291,8 @@ def _menu(state) -> tuple[list[MenuItem], list[Clamp]]:
             menu.append(MenuItem(action, actual))
             taken.add(actual)
     menu.append(MenuItem(ALL_IN, high))
+    if bot_sizing:
+        two_thirds = facing + int(2 / 3 * (state.total_pot_amount + to_call))
+        menu.append(MenuItem(RAISE_TWO_THIRDS_POT, min(max(two_thirds, low), high)))
+        menu.append(MenuItem(MIN_RAISE, low))
     return menu, clamps

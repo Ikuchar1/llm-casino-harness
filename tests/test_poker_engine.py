@@ -143,6 +143,50 @@ def test_pot_raises_that_would_go_past_the_stack_clamp_to_all_in_are_dropped_and
     assert all(not decision.clamps for decision in record.decisions[:4])
 
 
+class BotSizedPlayer(ScriptedPlayer):
+    """A scripted player that asks for the bot-only sizes, the way the leak bots do."""
+
+    bot_sizing = True
+
+
+def test_a_bot_sized_player_also_gets_a_two_thirds_pot_raise_and_a_min_raise_after_the_usual_menu():
+    bot = BotSizedPlayer(["raise_two_thirds_pot"])
+    record = play_hand(seed=1, players=heads_up(bot, ScriptedPlayer()), button="hero")
+
+    # Facing the big blind: 2 + 2/3 x (3 + 1) rounds down to a raise to 4, the same as the min raise.
+    assert menu_of(bot.states[0]) == [
+        ("fold", 0), ("call", 1), ("raise_half_pot", 4), ("raise_pot", 6), ("all_in", 200),
+        ("raise_two_thirds_pot", 4), ("min_raise", 4),
+    ]
+    assert (record.decisions[0].action, record.decisions[0].amount) == ("raise_two_thirds_pot", 4)
+
+
+def test_a_bot_sized_two_thirds_pot_raise_is_sized_on_the_pot_after_calling():
+    # Button raises pot to 6, the bot in the big blind raises pot to 18, button raises pot to 54.
+    bot = BotSizedPlayer(["raise_pot", "fold"])
+    play_hand(seed=1, players=heads_up(ScriptedPlayer(["raise_pot", "raise_pot"]), bot), button="hero")
+
+    # Facing 54 with 18 in: pot 72, 36 to call, so 54 + 2/3 x 108 = 126; min raise = 54 + 36.
+    assert menu_of(bot.states[1])[-2:] == [("raise_two_thirds_pot", 126), ("min_raise", 90)]
+
+
+def test_bot_sizes_past_the_stack_clamp_to_all_in_and_are_kept_on_the_menu():
+    # The bot on the button raises pot to 6 and 54; the big blind raises pot to 18 and 162.
+    bot = BotSizedPlayer(["raise_pot", "raise_pot", "fold"])
+    play_hand(seed=1, players=heads_up(bot, ScriptedPlayer(["raise_pot", "raise_pot"])), button="hero")
+
+    assert menu_of(bot.states[2]) == [
+        ("fold", 0), ("call", 108), ("all_in", 200), ("raise_two_thirds_pot", 200), ("min_raise", 200),
+    ]
+
+
+def test_a_player_facing_an_all_in_gets_no_bot_sizes_because_it_cannot_raise():
+    bot = BotSizedPlayer(["call"])
+    play_hand(seed=1, players=heads_up(ScriptedPlayer(["all_in"]), bot), button="hero")
+
+    assert menu_of(bot.states[0]) == [("fold", 0), ("call", 198)]
+
+
 # ---------- Fallback ----------
 
 
