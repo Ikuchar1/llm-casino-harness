@@ -84,13 +84,35 @@ def value_bet_rate(rows: list[Row]) -> Proportion:
     return Proportion(sum(_is_aggressive(row) for row in spots), len(spots))
 
 
+def _bot_raised_preflop(row: Row) -> bool:
+    return any(item["street"] == "preflop" and item["seat"] != row["seat"] and item["action"] in AGGRESSIVE
+               for item in row["history"])
+
+
+def _folds(spots: list[Row]) -> Proportion:
+    return Proportion(sum(row["action"] == FOLD for row in spots), len(spots))
+
+
+def fold_to_bet_preflop(rows: list[Row]) -> Proportion:
+    """Of the model's preflop decisions facing a bot raise (to_call > 0 and the history
+    shows a bot raise; facing only the big blind doesn't count), the share it folded."""
+    return _folds([row for row in _model(rows) if row["street"] == "preflop" and row["to_call"] > 0
+                   and _bot_raised_preflop(row)])
+
+
+def fold_to_bet_postflop(rows: list[Row]) -> Proportion:
+    """Of the model's postflop decisions facing a bet or raise (to_call > 0, which
+    heads-up postflop means the bot bet or raised), the share it folded."""
+    return _folds([row for row in _model(rows) if row["street"] in POSTFLOP and row["to_call"] > 0])
+
+
 def fold_to_bet_rate(rows: list[Row]) -> Proportion:
-    """Maniac and rock: of the model's postflop decisions facing a bet or raise
-    (to_call > 0, which heads-up postflop means the bot bet or raised), the share it
+    """Maniac and rock: of the model's decisions facing a bot bet or raise, preflop
+    (fold_to_bet_preflop) and postflop (fold_to_bet_postflop) together, the share it
     folded. Should go down vs the maniac and up vs the rock.
     """
-    faced = [row for row in _model(rows) if row["street"] in POSTFLOP and row["to_call"] > 0]
-    return Proportion(sum(row["action"] == FOLD for row in faced), len(faced))
+    preflop, postflop = fold_to_bet_preflop(rows), fold_to_bet_postflop(rows)
+    return Proportion(preflop.k + postflop.k, preflop.n + postflop.n)
 
 
 def call_down_rate(rows: list[Row]) -> Proportion:
@@ -337,8 +359,9 @@ class RunComparison:
     pair_differences: {pair: B's bb/100 - A's bb/100} over pairs complete in both.
     difference: their mean ± 1.96 SE. bootstrap_low/high: the paired bootstrap 95%
     percentile interval of the mean; bootstrap_p: its two-sided p-value for "no change".
-    habits: each habit metric B - A (decisions are not paired across runs, so the
-    interval is Newcombe's for independent rates).
+    habits: each habit metric B - A over the decisions in those same common pairs
+    (decisions are not paired across runs, so the interval is Newcombe's for
+    independent rates).
     """
 
     a: str
@@ -356,7 +379,10 @@ def compare_runs(a: Run, b: Run) -> RunComparison:
     """Pair two runs seed pair by seed pair. PairingError unless both were dealt the
     same seed list against the same bot."""
     for key, label in (("seeds", "seed list"), ("bot", "bot")):
-        if a.metadata.get(key) != b.metadata.get(key):
+        for run in (a, b):
+            if run.metadata.get(key) is None:
+                raise PairingError(f"cannot pair {a.name} with {b.name}: {run.name}'s metadata has no '{key}'")
+        if a.metadata[key] != b.metadata[key]:
             raise PairingError(f"cannot pair {a.name} with {b.name}: the {label} differs")
     results_a, _ = pair_bb100(a.hands)
     results_b, _ = pair_bb100(b.hands)
@@ -364,7 +390,9 @@ def compare_runs(a: Run, b: Run) -> RunComparison:
     differences = {pair: results_b[pair] - results_a[pair] for pair in common}
     low, high, p_value = paired_bootstrap(list(differences.values()))
     bot = a.metadata.get("bot", "")
-    habits_a, habits_b = habit_metrics(a.decisions, bot), habit_metrics(b.decisions, bot)
+    in_common = set(common)
+    habits_a, habits_b = (habit_metrics([row for row in run.decisions if pair_index(row["hand_number"]) in in_common], bot)
+                          for run in (a, b))
     return RunComparison(
         a=a.name, b=b.name,
         pair_differences=differences,
@@ -416,6 +444,14 @@ def _mean(mean: MeanCI) -> dict[str, Any]:
     return {"mean": _number(mean.mean), "low": _number(mean.low), "high": _number(mean.high), "n": mean.n}
 
 
+def _habit_split(name: str, rows: list[Row]) -> dict[str, Any]:
+    """fold_to_bet_rate's preflop and postflop parts; nothing for the other habits."""
+    if name != "fold_to_bet_rate":
+        return {}
+    return {"fold_to_bet_preflop": _proportion(fold_to_bet_preflop(rows)),
+            "fold_to_bet_postflop": _proportion(fold_to_bet_postflop(rows))}
+
+
 def summarize_run(run: Run, first_hands: int = FIRST_HANDS, last_hands: int = LAST_HANDS) -> dict[str, Any]:
     """Every metric for one run, as plain JSON-ready values."""
     bot = run.metadata.get("bot", "")
@@ -432,7 +468,7 @@ def summarize_run(run: Run, first_hands: int = FIRST_HANDS, last_hands: int = LA
         "bot": bot,
         "hands": len(run.hands),
         "pairs": len(bb.pair_bb100),
-        "habits": {name: {**_proportion(habit.rate), "target": habit.target}
+        "habits": {name: {**_proportion(habit.rate), "target": habit.target, **_habit_split(name, run.decisions)}
                    for name, habit in habit_metrics(run.decisions, bot).items()},
         "trend": {"first_hands": first, "last_hands": last,
                   "habits": {name: _difference(diff) for name, diff in

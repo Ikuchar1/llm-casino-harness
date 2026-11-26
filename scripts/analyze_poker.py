@@ -8,7 +8,8 @@ Usage (from the repo root):
 Prints a compact table per run and writes summary.json and summary.csv to --out
 (default results/poker/). --compare A B also prints the paired comparison B - A on the
 same seed pairs and writes comparison.json; it exits 2 if the runs were dealt
-different seed lists or played different bots. Metric definitions: analysis/poker_metrics.py.
+different seed lists or played different bots, or if either metadata.json lacks the
+seed list or the bot. Metric definitions: analysis/poker_metrics.py.
 """
 
 import argparse
@@ -82,12 +83,16 @@ def csv_row(summary: dict[str, Any]) -> dict[str, Any]:
     row = {key: summary[key] for key in ("run", "run_id", "model", "setup", "bot", "hands", "pairs")}
     for name, habit in summary["habits"].items():
         row.update({f"{name}_{key}": habit[key] for key in ("rate", "low", "high", "n")})
+        for part in ("fold_to_bet_preflop", "fold_to_bet_postflop"):
+            if part in habit:
+                row.update({f"{part}_{key}": habit[part][key] for key in ("rate", "k", "n")})
         trend = summary["trend"]["habits"][name]
         row.update({f"{name}_trend_{key}": trend[key] for key in ("difference", "low", "high")})
     bb = summary["bb_per_100"]
     row.update({"bb_per_100": bb["mean"], "bb_per_100_low": bb["low"], "bb_per_100_high": bb["high"]})
     profile = summary["profile"]
     row.update({"vpip": profile["vpip"]["rate"], "pfr": profile["pfr"]["rate"], "af": profile["af"],
+                "af_bets_raises": profile["af_bets_raises"], "af_calls": profile["af_calls"],
                 "wtsd": profile["wtsd"]["rate"], "fallback_rate": summary["fallback"]["rate"],
                 "prompt_tokens_mean": summary["prompt_tokens_mean"]})
     return row

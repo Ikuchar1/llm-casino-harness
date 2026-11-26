@@ -47,6 +47,35 @@ def test_analyzing_a_run_prints_its_table_and_writes_summary_json_and_csv(tmp_pa
     assert len(rows) == 1 and rows[0]["bot"] == "maniac"
 
 
+def test_the_fold_to_bet_rate_is_split_into_preflop_and_postflop_in_summary_json_and_csv(tmp_path, monkeypatch):
+    run_dir = play(monkeypatch, tmp_path / "plain")
+    out = tmp_path / "results"
+
+    assert load_script("analyze_poker").main([str(run_dir), "--out", str(out)]) == 0
+
+    (only,) = json.loads((out / "summary.json").read_text())["runs"]
+    fold = only["habits"]["fold_to_bet_rate"]
+    preflop, postflop = fold["fold_to_bet_preflop"], fold["fold_to_bet_postflop"]
+    assert preflop["n"] > 0  # the maniac raises preflop every hand
+    assert (preflop["k"] + postflop["k"], preflop["n"] + postflop["n"]) == (fold["k"], fold["n"])
+    (row,) = list(csv.DictReader((out / "summary.csv").open()))
+    assert (row["fold_to_bet_preflop_k"], row["fold_to_bet_preflop_n"]) == (str(preflop["k"]), str(preflop["n"]))
+    assert (row["fold_to_bet_postflop_k"], row["fold_to_bet_postflop_n"]) == (str(postflop["k"]), str(postflop["n"]))
+    assert "fold_to_bet_preflop_rate" in row and "fold_to_bet_postflop_rate" in row
+
+
+def test_the_csv_carries_the_af_counts_so_an_infinite_af_and_an_undefined_af_differ(tmp_path, monkeypatch):
+    run_dir = play(monkeypatch, tmp_path / "plain")
+    out = tmp_path / "results"
+
+    assert load_script("analyze_poker").main([str(run_dir), "--out", str(out)]) == 0
+
+    (only,) = json.loads((out / "summary.json").read_text())["runs"]
+    (row,) = list(csv.DictReader((out / "summary.csv").open()))
+    assert row["af_bets_raises"] == str(only["profile"]["af_bets_raises"])
+    assert row["af_calls"] == str(only["profile"]["af_calls"])
+
+
 def test_compare_prints_the_paired_plain_vs_memory_comparison(tmp_path, monkeypatch, capsys):
     plain = play(monkeypatch, tmp_path / "plain")
     memory = play(monkeypatch, tmp_path / "memory", setup="memory")
@@ -71,3 +100,17 @@ def test_compare_refuses_runs_dealt_different_seeds(tmp_path, monkeypatch, capsy
 
     assert code == 2
     assert "seed list differs" in capsys.readouterr().err
+
+
+def test_compare_refuses_a_run_whose_metadata_has_no_seed_list(tmp_path, monkeypatch, capsys):
+    plain = play(monkeypatch, tmp_path / "plain")
+    memory = play(monkeypatch, tmp_path / "memory", setup="memory")
+    metadata = json.loads((memory / "metadata.json").read_text())
+    del metadata["seeds"]
+    (memory / "metadata.json").write_text(json.dumps(metadata))
+    capsys.readouterr()
+
+    code = load_script("analyze_poker").main(["--compare", str(plain), str(memory), "--out", str(tmp_path / "r")])
+
+    assert code == 2
+    assert "memory's metadata has no 'seeds'" in capsys.readouterr().err

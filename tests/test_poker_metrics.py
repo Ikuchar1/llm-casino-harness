@@ -63,13 +63,36 @@ def test_fold_to_bet_rate_is_the_share_of_postflop_bets_faced_that_the_model_fol
         decision(TOP_PAIR_FLOP, "call", to_call=4),
         decision(NUTS, "raise_pot", to_call=4),
         decision(AIR, "check"),  # no bet to face: outside the subset
-        decision((["7c", "2d"], []), "fold", to_call=2),  # preflop: outside the subset
         decision(AIR, "fold", to_call=4, player="bot"),
     ]
 
     rate = pm.fold_to_bet_rate(rows)
 
     assert (rate.k, rate.n) == (1, 3)
+
+
+BOT_OPEN = {"street": "preflop", "seat": "button", "action": "raise_two_thirds_pot", "amount": 6}
+MODEL_OPEN = {"street": "preflop", "seat": "big_blind", "action": "raise_pot", "amount": 12}
+BOT_RERAISE = {"street": "preflop", "seat": "button", "action": "all_in", "amount": 200}
+
+
+def test_fold_to_bet_rate_counts_a_preflop_bot_raise_the_model_folded_to_but_not_the_big_blind_alone():
+    rows = [
+        decision(PREFLOP, "fold", to_call=4, seat="big_blind", history=[BOT_OPEN]),  # folds to the bot's raise
+        decision(PREFLOP, "call", to_call=4, seat="big_blind", history=[BOT_OPEN]),  # calls the bot's raise
+        decision(PREFLOP, "fold", to_call=188, seat="big_blind", history=[BOT_OPEN, MODEL_OPEN, BOT_RERAISE]),
+        decision(PREFLOP, "fold", to_call=1, seat="button"),  # facing only the big blind: outside the subset
+        decision(PREFLOP, "fold", to_call=4, seat="big_blind", history=[BOT_OPEN], player="bot"),
+        decision(AIR, "fold", to_call=4),  # postflop bot bet, folded
+        decision(TOP_PAIR_FLOP, "call", to_call=4),  # postflop bot bet, called
+    ]
+
+    rate = pm.fold_to_bet_rate(rows)
+    preflop, postflop = pm.fold_to_bet_preflop(rows), pm.fold_to_bet_postflop(rows)
+
+    assert (rate.k, rate.n) == (3, 5)
+    assert (preflop.k, preflop.n) == (2, 3)
+    assert (postflop.k, postflop.n) == (1, 2)
 
 
 RIVER_BOARD = ["Ks", "Tc", "8d", "2h", "3s"]
@@ -209,11 +232,35 @@ def test_the_paired_comparison_differences_two_runs_seed_pair_by_seed_pair():
     assert comparison.unmatched_pairs == 0
 
 
+def test_the_paired_comparisons_habits_cover_only_the_seed_pairs_complete_in_both_runs():
+    # A has all 3 pairs; B was cut after hand 2, so only pair 0 is complete in both.
+    full = [hand(h, 0) for h in range(6)]
+    a = run("plain", full, [decision(AIR, "raise_pot", hand_number=h) for h in range(6)])
+    b = run("memory", full[:3], [decision(NUTS, "raise_pot", hand_number=h) for h in range(3)], setup="memory")
+
+    comparison = pm.compare_runs(a, b)
+
+    assert list(comparison.pair_differences) == [0]
+    bluff = comparison.habits["bluff_rate"]
+    assert (bluff.before.k, bluff.before.n) == (2, 2)  # A's hands 0 and 1 only
+    assert (bluff.after.k, bluff.after.n) == (0, 2)  # B's hand 2 belongs to the incomplete pair 1
+
+
 def test_runs_dealt_different_seeds_are_refused_for_a_paired_comparison():
     plain = run("plain", [hand(0, 4), hand(1, -2)], seeds=(11,))
     memory = run("memory", [hand(0, 4), hand(1, -2)], seeds=(12,))
 
     with pytest.raises(pm.PairingError, match="seed"):
+        pm.compare_runs(plain, memory)
+
+
+@pytest.mark.parametrize("key", ["seeds", "bot"])
+def test_runs_whose_metadata_both_lack_the_seed_list_or_the_bot_are_refused_for_a_paired_comparison(key):
+    plain = run("plain", [hand(0, 4), hand(1, -2)])
+    memory = run("memory", [hand(0, 4), hand(1, -2)], setup="memory")
+    del plain.metadata[key], memory.metadata[key]
+
+    with pytest.raises(pm.PairingError, match=f"no '{key}'"):
         pm.compare_runs(plain, memory)
 
 
@@ -245,17 +292,27 @@ def test_the_models_profile_has_vpip_pfr_af_and_wtsd():
 
 def test_the_fallback_rate_counts_the_models_fallbacks_with_a_breakdown_by_parse_status():
     rows = [
-        decision(fallback=True, parse_status="unreadable"),
+        decision(fallback=True, parse_status="unparseable"),
         decision(parse_status="ok"),
         decision(parse_status="ok"),
-        decision(fallback=True, parse_status="illegal"),
+        decision(parse_status="mapped"),
+        decision(fallback=True, parse_status="unparseable"),
         decision(fallback=True, player="bot"),
     ]
 
     output = pm.output_quality(rows)
 
-    assert (output.fallback.k, output.fallback.n) == (2, 4)
-    assert output.parse_status == {"ok": 2, "unreadable": 1, "illegal": 1}
+    assert (output.fallback.k, output.fallback.n) == (2, 5)
+    assert output.parse_status == {"ok": 2, "mapped": 1, "unparseable": 2}
+
+
+def test_an_off_menu_choice_the_engine_still_applied_is_not_a_fallback():
+    rows = [decision(action="all_in", parse_status="off_menu"), decision(fallback=True, parse_status="unparseable")]
+
+    output = pm.output_quality(rows)
+
+    assert (output.fallback.k, output.fallback.n) == (1, 2)
+    assert output.parse_status == {"off_menu": 1, "unparseable": 1}
 
 
 def test_prompt_tokens_per_decision_is_the_mean_over_the_models_logged_counts_and_none_when_never_logged():
