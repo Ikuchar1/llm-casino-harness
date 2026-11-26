@@ -79,6 +79,27 @@ class FakeOllama:
 
         return ChatReply(content="ACTION: check/call", done_reason="stop", eval_count=3, latency_s=0.1)
 
+    def chat_messages(self, messages):
+        return self.chat(messages[0]["content"], messages[-1]["content"])
+
+
+def test_the_tools_memory_setup_runs_with_tools_and_a_re_check_on_every_model_decision(tmp_path, monkeypatch):
+    module = load_script()
+    monkeypatch.setattr(module, "OllamaClient", FakeOllama)
+    monkeypatch.setattr(module, "get_model_digest", lambda model: "sha256:abc")
+    monkeypatch.setattr(module, "get_ollama_version", lambda: "0.9.0")
+    monkeypatch.setattr(module, "BOT_REGISTRY", {"scripted": CheckCallBot})
+    out = tmp_path / "run"
+    monkeypatch.setattr(sys, "argv", ["run_poker.py", "--model", "fake:1b", "--setup", "tools_memory", "--bot", "scripted",
+                                      "--pairs", "1", "--seed", "5", "--out", str(out)])
+
+    assert module.main() == 0
+
+    metadata = json.loads((out / "metadata.json").read_text())
+    assert metadata["setup"] == "tools_memory" and metadata["tools"] and metadata["memory"]
+    model_rows = [row for row in read_jsonl(out / "decisions.jsonl") if row["player"] == "model"]
+    assert model_rows and all(row["tools"] and row["self_check"]["final_action"] for row in model_rows)
+
 
 def test_the_llm_player_runs_through_the_ollama_client_and_records_the_model(tmp_path, monkeypatch):
     module = load_script()

@@ -5,6 +5,7 @@ Usage (from the repo root):
     .venv/bin/python scripts/run_poker.py --bot maniac --pairs 1 --seed 2026 --model qwen2.5:7b --out runs/smoke
     .venv/bin/python scripts/run_poker.py --player station --bot rock --pairs 5 --seed 1 --out /tmp/poker_test
     .venv/bin/python scripts/run_poker.py --setup memory --bot calling_station --pairs 10 --seed 2026 --out runs/smoke_memory
+    .venv/bin/python scripts/run_poker.py --setup tools --bot rock --pairs 5 --seed 2026 --out runs/smoke_tools
 
 Each seed is dealt twice (model on the button, then the bot), so --pairs N plays 2N
 hands. --player random|station swaps the LLM for a scripted player (no Ollama needed),
@@ -13,7 +14,10 @@ through a pair; model, setup, bot, seed and the model's digest must match (exit 
 otherwise). Each session records the platform it ran on.
 
 --setup memory keeps opponent notes that the model rewrites every 5 committed hands
-(with a scripted player the rewrites get no reply and log empty notes).
+(with a scripted player the rewrites get no reply and log empty notes). --setup tools
+adds the full tools to every decision prompt (equity and pot odds, the preflop chart)
+and a generic re-check turn after every answer, so each decision makes two calls;
+--setup tools_memory is tools plus memory. Tool versions must match on a resume too.
 
 Writes <out>/decisions.jsonl, hands.jsonl and metadata.json, plus memory.jsonl (one row
 per notes rewrite) in the memory setup.
@@ -77,7 +81,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--pairs", type=int, required=True, help="number of seed pairs (2 hands each)")
     parser.add_argument("--seed", type=int, required=True, help="base seed for the match's deck seeds")
     parser.add_argument("--model", default=DEFAULT_MODEL, help=f"Ollama model tag (default {DEFAULT_MODEL})")
-    parser.add_argument("--setup", choices=list(SETUPS), default="plain", help="harness setup (default plain)")
+    parser.add_argument("--setup", choices=list(SETUPS), default="plain",
+                        help="harness setup: plain, memory, tools or tools_memory (default plain)")
     parser.add_argument("--out", type=Path, default=None, help="run directory (default runs/poker_<...>)")
     parser.add_argument("--player", choices=("llm", *SCRIPTED_PLAYERS), default="llm",
                         help="llm (default), or a scripted stand-in for testing without Ollama")
