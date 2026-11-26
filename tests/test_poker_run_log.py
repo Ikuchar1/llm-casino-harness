@@ -59,7 +59,12 @@ def test_decision_rows_log_the_state_the_menu_the_choice_and_the_fallback_and_cl
         {"action": "raise_pot", "requested": 486, "actual": 200},
     ]
     bad = rows[5]
-    assert (bad["choice"], bad["action"], bad["fallback"], bad["clamped"], bad["clamps"]) == ("shove", "fold", True, False, [])
+    assert (bad["choice"], bad["action"], bad["fallback"], bad["clamped"]) == ("shove", "fold", True, False)
+    assert bad["clamps"] == [  # facing the all-in no raise is legal: every raise name clamps to the call
+        {"action": "raise_half_pot", "requested": 400, "actual": 200},
+        {"action": "raise_pot", "requested": 600, "actual": 200},
+        {"action": "all_in", "requested": 200, "actual": 200},
+    ]
 
 
 def test_the_clamped_flag_and_count_mean_the_applied_action_was_clamped_not_just_that_the_menu_had_clamps():

@@ -8,6 +8,7 @@ import dataclasses
 import json
 import random
 
+from poker import engine
 from poker.cards import make_deck
 from poker.engine import play_duplicate, play_hand, play_match
 
@@ -151,6 +152,33 @@ def test_answering_with_a_pot_raise_that_was_dropped_as_a_duplicate_applies_the_
     assert (answer.choice, answer.action, answer.amount, answer.fallback, answer.clamped) == ("raise_pot", "all_in", 200, False, True)
     assert "raise_pot" not in [action for action, _ in menu_of(answer.state)]
     assert record.actions[4].action == "all_in"
+
+
+def test_a_raise_answered_when_calling_puts_the_player_all_in_is_applied_as_the_call_and_clamped():
+    # The button shoves 200; the big blind's menu is fold / call 198, and calling is all of its chips.
+    _, _, record = first_states(button_choices=["all_in"], big_blind_choices=["raise_half_pot"])
+
+    answer = record.decisions[1]
+    assert menu_of(answer.state) == [("fold", 0), ("call", 198)]
+    assert (answer.choice, answer.action, answer.amount, answer.fallback, answer.clamped) == (
+        "raise_half_pot", "call", 198, False, True,
+    )
+    assert [(c.action, c.actual) for c in answer.clamps] == [("raise_half_pot", 200), ("raise_pot", 200), ("all_in", 200)]
+    assert record.actions[1].action == "call"
+    assert record.showdown is True
+
+
+def test_a_raise_answered_against_an_all_in_opponent_with_chips_left_over_is_applied_as_the_call_and_clamped(monkeypatch):
+    # Uneven stacks (never dealt in a match) so the call is not all-in for us: big blind 400, button 200.
+    monkeypatch.setattr(engine, "STARTING_STACK", (400, 200))
+    _, big_blind_states, record = first_states(button_choices=["all_in"], big_blind_choices=["raise_pot"])
+
+    answer = record.decisions[1]
+    assert big_blind_states[0].stack == 398
+    assert menu_of(answer.state) == [("fold", 0), ("call", 198)]
+    assert (answer.choice, answer.action, answer.amount, answer.fallback, answer.clamped) == (
+        "raise_pot", "call", 198, False, True,
+    )
 
 
 def test_a_decision_counts_as_clamped_only_when_the_applied_action_was_clamped():

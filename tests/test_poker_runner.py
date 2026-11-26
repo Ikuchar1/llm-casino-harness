@@ -170,7 +170,7 @@ def test_resuming_a_run_started_under_the_poker_v2_prompt_is_refused_because_of_
     (out / "metadata.json").write_text(json.dumps({**metadata, "prompt_version": "poker-v2"}))
     before = (out / "hands.jsonl").read_text()
 
-    with pytest.raises(ValueError, match="cannot resume.*prompt_version='poker-v2', not 'poker-v3'"):
+    with pytest.raises(ValueError, match="cannot resume.*prompt_version='poker-v2', not 'poker-v4'"):
         run(out, n_pairs=2)
     assert (out / "hands.jsonl").read_text() == before
     assert len(json.loads((out / "metadata.json").read_text())["sessions"]) == 1

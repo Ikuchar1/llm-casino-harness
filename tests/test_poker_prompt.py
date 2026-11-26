@@ -80,8 +80,17 @@ def test_with_no_bet_to_face_after_the_flop_the_menu_names_each_item_first_and_o
     assert not any(word in line.split(" - ", 1)[1].split() for line in menu for word in ("bet", "raise"))
 
 
-def test_the_prompt_version_is_poker_v3_since_the_menu_descriptions_changed():
-    assert PROMPT_VERSION == "poker-v3"
+def test_a_call_that_uses_all_the_remaining_chips_says_so():
+    state = flop_state()
+    state = DecisionState(**{**state.__dict__, "stack": 74, "to_call": 74,
+                             "menu": (MenuItem("fold"), MenuItem("call", 74))})
+
+    menu = build_user_prompt(state).split("Legal actions:\n")[1].splitlines()
+    assert menu == ["1. fold - give up the hand", "2. call - put in 74 more chips to match (all your chips)"]
+
+
+def test_the_prompt_version_is_poker_v4_since_the_all_in_call_line_changed():
+    assert PROMPT_VERSION == "poker-v4"
 
 
 def test_this_hands_actions_are_told_as_you_and_opponent_by_street():

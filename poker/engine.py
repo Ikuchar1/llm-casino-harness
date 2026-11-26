@@ -269,7 +269,10 @@ def _menu(state, bot_sizing: bool = False) -> tuple[list[MenuItem], list[Clamp],
     Raise sizes are clamped to PokerKit's min/max raise-to; a raise that clamps to an
     amount already on the menu (often the all-in) is hidden from the menu, and its name
     maps to the item it collapsed into, so answering it applies that item rather than a
-    fallback. Every clamp is returned, with that name -> item map.
+    fallback. With a bet to call and no raise legal (one player is all-in), the most a
+    raise can put in is the call, so raise_half_pot, raise_pot and all_in clamp to the
+    call the same way (their `actual` is the street total after calling).
+    Every clamp is returned, with that name -> item map.
     With `bot_sizing`, a 2/3-pot raise and a min raise follow, clamped the same way but
     never dropped and not recorded as clamps (those count the LLM's menu only).
     """
@@ -280,12 +283,21 @@ def _menu(state, bot_sizing: bool = False) -> tuple[list[MenuItem], list[Clamp],
         menu.append(MenuItem(FOLD))
     menu.append(MenuItem(CALL, to_call) if to_call else MenuItem(CHECK))
     dropped: dict[str, MenuItem] = {}
+    facing = max(state.bets)
     if not state.can_complete_bet_or_raise_to():
+        if to_call:  # the most a raise can put in is the call (the caller or the opponent is all-in)
+            me = state.actor_index
+            call_total = state.bets[me] + to_call
+            requests = [
+                (action, facing + int(fraction * (state.total_pot_amount + to_call))) for action, fraction in _POT_FRACTIONS
+            ]
+            for action, requested in [*requests, (ALL_IN, state.bets[me] + state.stacks[me])]:
+                clamps.append(Clamp(action, requested, call_total))
+                dropped[action] = menu[-1]
         return menu, clamps, dropped
 
     low = state.min_completion_betting_or_raising_to_amount
     high = state.max_completion_betting_or_raising_to_amount
-    facing = max(state.bets)
     all_in = MenuItem(ALL_IN, high)
     by_amount = {high: all_in}
     for action, fraction in _POT_FRACTIONS:

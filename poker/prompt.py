@@ -20,7 +20,8 @@ from poker.engine import (
 # v3: menu descriptions start after the exact item name and offer no bare "bet" or "raise"
 #     (e.g. "raise_half_pot - your total this street becomes 6 chips (half the pot)"), the same
 #     wording whether or not a bet is owed.
-PROMPT_VERSION = "poker-v3"
+# v4: a call that uses all the remaining chips says so: "call - put in 74 more chips to match (all your chips)".
+PROMPT_VERSION = "poker-v4"
 
 # The memory hook's block heading, the only one (poker.memory.render_notes_block writes the
 # lines under it). Prompts without notes never contain it.
@@ -140,16 +141,17 @@ def menu_lines(state: DecisionState) -> list[str]:
     "bet" or "raise" a model could answer with instead of the name; the wording is the
     same whether or not a bet is owed.
     """
-    return [f"{number}. {item.action} - {_describe(item)}" for number, item in enumerate(state.menu, start=1)]
+    return [f"{number}. {item.action} - {_describe(item, state.stack)}" for number, item in enumerate(state.menu, start=1)]
 
 
-def _describe(item: MenuItem) -> str:
+def _describe(item: MenuItem, stack: int) -> str:
     if item.action == FOLD:
         return "give up the hand"
     if item.action == CHECK:
         return "put in no more chips"
     if item.action == CALL:
-        return f"put in {item.amount} more chips to match"
+        all_in = f" ({_SIZE_WORDS[ALL_IN]})" if item.amount >= stack else ""
+        return f"put in {item.amount} more chips to match{all_in}"
     return f"your total this street becomes {item.amount} chips ({_SIZE_WORDS.get(item.action, item.action)})"
 
 
