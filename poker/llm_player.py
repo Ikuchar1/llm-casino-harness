@@ -150,7 +150,8 @@ class PokerLLMPlayer:
             "second_action": second.action,
             "second_parse_status": second.status,
             "final_action": final,
-            "flipped": final != first_choice,
+            # The action played changed, not just its name (all_in then call facing a shove both apply as the call).
+            "flipped": state.applied_action(final) != state.applied_action(first_choice),
             "done_reason": reply.done_reason,
             "eval_count": reply.eval_count,
             "prompt_tokens": reply.prompt_eval_count,

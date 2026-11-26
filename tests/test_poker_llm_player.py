@@ -249,3 +249,10 @@ def test_an_unusable_first_answer_then_a_re_check_naming_a_raise_the_engine_appl
     assert (decision.choice, decision.action, decision.fallback, decision.clamped) == ("all_in", "call", False, True)
     assert detail.self_check["recheck_prompt"] == RECHECK_PROMPT_INVALID
     assert (detail.self_check["first_action"], detail.self_check["final_action"]) == (None, "all_in")
+
+
+def test_a_re_check_that_renames_the_same_applied_action_is_not_a_flip():
+    decision, detail = facing_a_shove(["ACTION: all_in", "Calling is the same here.\nACTION: call"])
+
+    assert (decision.choice, decision.action) == ("call", "call")
+    assert (detail.self_check["final_action"], detail.self_check["flipped"]) == ("call", False)
