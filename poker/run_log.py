@@ -95,13 +95,21 @@ class PokerRunWriter:
 
     def write_hand(self, record: HandRecord) -> None:
         """Write one finished hand: its decision rows first, then its hand row."""
+        self.write_rows(decision_rows(record), hand_row(record))
+
+    def write_rows(self, decisions: list[dict[str, Any]], hand: dict[str, Any]) -> None:
+        """Write one finished hand's rows as given (the runner adds run identity and LLM detail)."""
         with open(self.decisions_path, "a", encoding="utf-8") as f:
-            for row in decision_rows(record):
+            for row in decisions:
                 f.write(json.dumps(row) + "\n")
             f.flush()
         with open(self.hands_path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(hand_row(record)) + "\n")
+            f.write(json.dumps(hand) + "\n")
             f.flush()
+
+    def hand_rows(self) -> list[dict[str, Any]]:
+        """Every hand row written so far."""
+        return _read_jsonl(self.hands_path)
 
     def _clean_up_after_interruption(self) -> None:
         hands = _read_jsonl(self.hands_path)
