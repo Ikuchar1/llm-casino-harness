@@ -94,19 +94,61 @@ class OpponentTally:
         happened, against = self.counts(key)
         return f"key {key} | for {happened} | against {against}"
 
-    def _dominant(self, *pairs: tuple[str, str], suffix: str = "", extra: tuple[str, ...] = (), indent: str = "  ") -> list[str]:
-        """One citation line per key to list for these outcome pairs: each pair's more frequent side, both if tied.
+    def _dominant(self, *pairs: tuple[str, str], suffix: str = "") -> list[str]:
+        """The keys to list for these outcome pairs: each pair's more frequent side, both if tied.
 
         Lists only keys a read can be CONFIRMED on, so a model can't cite the low-count side
-        for a "rarely X" read (the full tally still verifies any key cited). `extra` keys
-        (not one of a pair) follow.
+        for a "rarely X" read.
         """
         shown: list[str] = []
         for first, second in pairs:
             a, b = first + suffix, second + suffix
             yes_a, yes_b = self._yes[a], self._yes[b]
             shown += [a, b] if yes_a == yes_b else [a if yes_a > yes_b else b]
-        return [indent + self.citation(key) for key in (*shown, *(key + suffix for key in extra))]
+        return shown
+
+    def _faced_bet(self, suffix: str = "") -> list[str]:
+        """The faced-bet keys to list: fold/continue and raise/no_raise by _dominant, then
+        faced_bet.call only when calling was the most common answer (ties included)."""
+        keys = self._dominant(("faced_bet.fold", "faced_bet.continue"), ("faced_bet.raise", "faced_bet.no_raise"), suffix=suffix)
+        call, fold, raised = (self._yes[f"faced_bet.{name}{suffix}"] for name in ("call", "fold", "raise"))
+        return keys + [f"faced_bet.call{suffix}"] if call >= max(fold, raised) else keys
+
+    def _sections(self) -> list[tuple[str, list[str], str]]:
+        """(heading, listed keys, key indent) in render order: the one place that decides which keys are listed."""
+        sections = [
+            ("preflop, put money in voluntarily or not (per hand):", self._dominant(("preflop.vpip", "preflop.no_vpip")), "  "),
+            ("preflop, raised or not (per hand):", self._dominant(("preflop.raise", "preflop.no_raise")), "  "),
+        ]
+        faced = self._opportunities["faced_bet.fold"]
+        fold, call, raised = (self._yes[f"faced_bet.{name}"] for name in ("fold", "call", "raise"))
+        sections.append((f"faced a bet {faced} times: folded {fold}, called {call}, raised {raised}", self._faced_bet(), "  "))
+        for street in STREETS:
+            if self._opportunities[f"faced_bet.fold.{street}"]:
+                sections.append((
+                    f"  {street}, faced a bet {self._opportunities[f'faced_bet.fold.{street}']} times:",
+                    self._faced_bet(f".{street}"), "    ",
+                ))
+        chances = self._opportunities["checked_to.bet"]
+        checked_pair = ("checked_to.bet", "checked_to.check")
+        sections.append((
+            f"no bet to face after the flop {chances} times: bet {self._yes['checked_to.bet']},"
+            f" checked {self._yes['checked_to.check']}",
+            self._dominant(checked_pair), "  ",
+        ))
+        for street in POSTFLOP_STREETS:
+            if self._opportunities[f"checked_to.bet.{street}"]:
+                sections.append((
+                    f"  {street}, no bet to face {self._opportunities[f'checked_to.bet.{street}']} times:",
+                    self._dominant(checked_pair, suffix=f".{street}"), "    ",
+                ))
+        sections.append(("went to showdown, of hands that saw a flop:", ["showdown.reached"], "  "))
+        # A 0/0 key has nothing to back a read with, so it is never listed.
+        return [(heading, [k for k in keys if self._opportunities[k]], indent) for heading, keys, indent in sections]
+
+    def listed_keys(self) -> set[str]:
+        """The keys render() lists, the only ones a rewrite may cite (verify drops any other)."""
+        return {key for _, keys, _ in self._sections() for key in keys}
 
     def render(self) -> str:
         """Short text for the rewrite prompt: labelled sections, each key on its own line as a citation.
@@ -114,37 +156,13 @@ class OpponentTally:
         Every key line is `key K | for N | against M`, the exact tail of a rewrite line, so
         the model copies it rather than looking counts up. Of each complementary pair of
         keys (vpip/no_vpip, fold/continue, raise/no_raise, bet/check) only the side that
-        happened more often is listed, both when tied.
+        happened more often is listed, both when tied; faced_bet.call only when calling was
+        the most common answer to a bet; and no key with zero opportunities.
         """
-        lines = [
-            f"hands dealt: {self.hands}",
-            "preflop, put money in voluntarily or not (per hand):",
-            *self._dominant(("preflop.vpip", "preflop.no_vpip")),
-            "preflop, raised or not (per hand):",
-            *self._dominant(("preflop.raise", "preflop.no_raise")),
-        ]
-        faced = self._opportunities["faced_bet.fold"]
-        fold, call, raised = (self._yes[f"faced_bet.{name}"] for name in ("fold", "call", "raise"))
-        lines.append(f"faced a bet {faced} times: folded {fold}, called {call}, raised {raised}")
-        faced_pairs = (("faced_bet.fold", "faced_bet.continue"), ("faced_bet.raise", "faced_bet.no_raise"))
-        lines += self._dominant(*faced_pairs, extra=("faced_bet.call",))
-        for street in STREETS:
-            if self._opportunities[f"faced_bet.fold.{street}"]:
-                lines.append(f"  {street}, faced a bet {self._opportunities[f'faced_bet.fold.{street}']} times:")
-                lines += self._dominant(*faced_pairs, suffix=f".{street}", extra=("faced_bet.call",), indent="    ")
-        chances = self._opportunities["checked_to.bet"]
-        lines.append(
-            f"no bet to face after the flop {chances} times: bet {self._yes['checked_to.bet']},"
-            f" checked {self._yes['checked_to.check']}"
-        )
-        checked_pair = ("checked_to.bet", "checked_to.check")
-        lines += self._dominant(checked_pair)
-        for street in POSTFLOP_STREETS:
-            if self._opportunities[f"checked_to.bet.{street}"]:
-                lines.append(f"  {street}, no bet to face {self._opportunities[f'checked_to.bet.{street}']} times:")
-                lines += self._dominant(checked_pair, suffix=f".{street}", indent="    ")
-        lines.append("went to showdown, of hands that saw a flop:")
-        lines.append("  " + self.citation("showdown.reached"))
+        lines = [f"hands dealt: {self.hands}"]
+        for heading, keys, indent in self._sections():
+            lines.append(heading)
+            lines += [indent + self.citation(key) for key in keys]
         if self.showdowns:
             shown = [f"hand {s.hand_number} {' '.join(s.cards)} on {' '.join(s.board)}" for s in self.showdowns[-SHOWN_HANDS:]]
             lines.append("showed at showdown: " + "; ".join(shown))
@@ -327,20 +345,27 @@ class VerifyResult:
     notes: Notes  # with the tally's true counts and the harness-set status; unverifiable ones left out
     count_mismatches: list[dict[str, Any]]  # cited counts the harness replaced
     unverifiable: list[str]  # texts of hypotheses whose key is missing or not in OPPORTUNITY_KEYS (dropped)
+    unlisted_keys: list[dict[str, Any]]  # text and key of hypotheses citing a key the tally text doesn't list (dropped)
 
 
 def verify(notes: Notes, tally: OpponentTally) -> VerifyResult:
     """Check every cited count against the tally and set each status.
 
     A mismatched count is replaced by the true one, and that read is TENTATIVE for this
-    version whatever the true counts say. Reads with no known key are dropped.
+    version whatever the true counts say. Reads with no known key are dropped, and so are
+    reads citing a known key the tally text doesn't list (the prompt allows only listed keys).
     """
     checked: list[Hypothesis] = []
     mismatches: list[dict[str, Any]] = []
     unverifiable: list[str] = []
+    unlisted: list[dict[str, Any]] = []
+    listed = tally.listed_keys()
     for hypothesis in notes.hypotheses:
         if hypothesis.opportunity_key not in OPPORTUNITY_KEYS:  # nothing to check it against: not shown
             unverifiable.append(hypothesis.text)
+            continue
+        if hypothesis.opportunity_key not in listed:
+            unlisted.append({"text": hypothesis.text, "opportunity_key": hypothesis.opportunity_key})
             continue
         true_for, true_against = tally.counts(hypothesis.opportunity_key)
         status = status_for(hypothesis.opportunity_key, true_for, true_against)
@@ -353,7 +378,7 @@ def verify(notes: Notes, tally: OpponentTally) -> VerifyResult:
         checked.append(dataclasses.replace(
             hypothesis, for_count=true_for, against_count=true_against, status=status,
         ))
-    return VerifyResult(Notes(tuple(checked)), mismatches, unverifiable)
+    return VerifyResult(Notes(tuple(checked)), mismatches, unverifiable, unlisted)
 
 
 def refresh(notes: Notes, tally: OpponentTally) -> VerifyResult:
@@ -415,7 +440,7 @@ Rewrite your notes in full from the evidence below. Do not just add to the old n
 Previous notes; revise or discard based on the counts below:
 {old}
 
-Opponent tally after {tally.hands} hands (counted by the harness from what you could see; each key line gives that key's for count, the times its outcome happened, and its against count, the times it didn't; of each pair of opposite keys, like faced_bet.fold and faced_bet.continue, only the one that happened more often is listed, both when tied):
+Opponent tally after {tally.hands} hands (counted by the harness from what you could see; each key line gives that key's for count, the times its outcome happened, and its against count, the times it didn't; of each pair of opposite keys, like faced_bet.fold and faced_bet.continue, only the one that happened more often is listed, both when tied; faced_bet.call is listed only when calling was the opponent's most common answer to a bet, and keys with no opportunities yet are not listed):
 {tally.render()}
 
 Last {len(recent_hands)} hands ("opp" is your opponent):
@@ -424,8 +449,8 @@ Last {len(recent_hands)} hands ("opp" is your opponent):
 Write at most {MAX_HYPOTHESES} hypotheses about how the opponent plays, one per line, in exactly this format:
 <what the opponent does> | key <tally key> | for <N> | against <M>
 Each line cites one tally key: after your text, copy one key line from the tally exactly as written, with its for and against counts.
-Always cite a listed key whose outcome supports your line, so a high for count backs it up; for a "rarely" or "never" line, cite the opposite key. For example:
-- "never folds to bets" cites faced_bet.continue
+Cite only a key line listed in the tally above; a line citing any other key is dropped. Always cite the listed key whose outcome supports your line, so a high for count backs it up; a "rarely" or "never" line must cite the listed opposite key. For example:
+- "never folds to bets" cites faced_bet.continue, not faced_bet.fold
 - "folds to most bets" cites faced_bet.fold
 - "always bets when checked to" cites checked_to.bet
 - "plays very few hands" cites preflop.no_vpip
@@ -520,9 +545,10 @@ class MemoryEvent:
     parsed_notes: list[dict[str, Any]]  # as the parser read them (the old notes on parse_failed)
     verified_notes: list[dict[str, Any]]  # true counts and harness-set status: the notes now in use
     tally: dict[str, Any]  # OpponentTally.snapshot() at this rewrite
-    flags: dict[str, bool]  # count_mismatch, unverifiable, parse_failed, truncated, junk_lines, dropped_lines
+    flags: dict[str, bool]  # count_mismatch, unverifiable, unlisted_key, parse_failed, truncated, junk_lines, dropped_lines
     count_mismatches: list[dict[str, Any]]
     unverifiable: list[str]
+    unlisted_keys: list[dict[str, Any]]
     junk_lines: list[str]
     dropped_lines: list[str]
 
@@ -609,6 +635,7 @@ class MemoryState:
             flags={
                 "count_mismatch": bool(checked.count_mismatches),
                 "unverifiable": bool(checked.unverifiable),
+                "unlisted_key": bool(checked.unlisted_keys),
                 "parse_failed": parsed.parse_failed,
                 "truncated": parsed.truncated,
                 "junk_lines": bool(parsed.junk_lines),
@@ -616,6 +643,7 @@ class MemoryState:
             },
             count_mismatches=checked.count_mismatches,
             unverifiable=checked.unverifiable,
+            unlisted_keys=checked.unlisted_keys,
             junk_lines=parsed.junk_lines,
             dropped_lines=parsed.dropped,
         )
@@ -646,7 +674,9 @@ class MemoryState:
 # v2: the tally lists only the dominant side of each complementary key pair.
 # v3: each tally key is its own ready-to-copy `key K | for N | against M` line, and the
 #     previous notes show each read with the tally's current counts.
-MEMORY_VERSION = "memory-v3"
+# v4: a read citing a key the tally text doesn't list is dropped (unlisted_key); 0/0 keys
+#     aren't listed, nor faced_bet.call unless calling was the most common answer to a bet.
+MEMORY_VERSION = "memory-v4"
 
 
 def memory_settings() -> dict[str, Any]:

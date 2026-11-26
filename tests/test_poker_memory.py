@@ -187,7 +187,7 @@ def test_the_tally_text_lists_only_the_side_of_each_pair_the_calling_station_did
     assert "faced_bet.continue.flop" in text
     assert "faced_bet.raise" not in text and "faced_bet.fold" not in text
     assert "checked_to.check" in text and "checked_to.bet" not in text
-    assert "faced_bet.call" in text  # not one of a pair: listed as before
+    assert "faced_bet.call" in text  # calling is the station's most common answer to a bet
 
 
 def test_the_tally_text_lists_each_key_on_its_own_line_as_a_ready_to_copy_citation_with_its_true_counts():
@@ -223,6 +223,35 @@ def test_the_tally_text_lists_both_sides_of_a_pair_that_is_tied():
     text = tally_of(called, folded).render()
 
     assert "key preflop.vpip | for 1 | against 1" in text and "key preflop.no_vpip | for 1 | against 1" in text
+
+
+def test_faced_bet_call_is_listed_only_when_calling_was_the_most_common_answer_to_a_bet_ties_included():
+    rock = tally_of(*play_match(match_seeds(7, 20), {"hero": Aggressor(), "villain": make_bot("rock")}))
+    assert rock.counts("faced_bet.fold")[0] > rock.counts("faced_bet.call")[0]
+    called = hand(seed=1, hand_number=0, hero=["raise_pot"], villain=["call", "fold"])
+    folded = hand(seed=2, hand_number=1, hero=["raise_pot"], villain=["fold"])
+    tied = tally_of(called, folded)
+    assert tied.counts("faced_bet.call.preflop") == tied.counts("faced_bet.fold.preflop") == (1, 1)
+
+    assert "faced_bet.call" not in rock.render()
+    assert not any(key.startswith("faced_bet.call") for key in rock.listed_keys())
+    assert "key faced_bet.call.preflop | for 1 | against 1" in tied.render()
+
+    result = verify(Notes((Hypothesis("rarely calls", *rock.counts("faced_bet.call"), "faced_bet.call"),)), rock)
+
+    assert result.notes == Notes()
+    assert result.unlisted_keys == [{"text": "rarely calls", "opportunity_key": "faced_bet.call"}]
+
+
+def test_the_tally_text_lists_no_key_with_zero_opportunities():
+    tally = tally_of(*[hand(seed=s, hand_number=s) for s in range(7)])  # the opponent never faced a bet
+    assert sum(tally.counts("faced_bet.fold")) == 0
+
+    text = tally.render()
+
+    assert "faced a bet 0 times" in text
+    assert "| for 0 | against 0" not in text
+    assert not any(key.startswith("faced_bet.") for key in tally.listed_keys())
 
 
 # ---------- Hypotheses and notes ----------
@@ -347,6 +376,25 @@ def test_a_hypothesis_with_an_unknown_or_missing_key_is_dropped_from_the_notes_a
     assert result.count_mismatches == []
 
 
+def test_a_read_citing_the_unlisted_minority_side_of_a_pair_is_dropped_and_logged_as_an_unlisted_key():
+    # qwen2.5:7b's smoke-run read: right counts, but faced_bet.fold is not listed for the station.
+    memory = station_memory()
+    folds, others = memory.tally.counts("faced_bet.fold")
+    continues = memory.tally.counts("faced_bet.continue")
+    assert "faced_bet.fold" not in memory.tally.render()
+
+    event = memory.apply_rewrite(
+        f"never folds | key faced_bet.fold | for {folds} | against {others}\n"
+        f"calls everything | key faced_bet.continue | for {continues[0]} | against {continues[1]}"
+    )
+
+    assert [h.text for h in memory.notes.hypotheses] == ["calls everything"]
+    assert memory.notes.hypotheses[0].status == CONFIRMED
+    assert event.unlisted_keys == [{"text": "never folds", "opportunity_key": "faced_bet.fold"}]
+    assert event.flags["unlisted_key"] and not event.flags["unverifiable"] and not event.flags["count_mismatch"]
+    assert event.unverifiable == []
+
+
 def test_a_facing_a_bet_or_no_bet_to_face_read_is_confirmed_from_the_leak_threshold_of_opportunities():
     assert LEAK_THRESHOLD == 8
     assert status_for("faced_bet.continue", 7, 0) == TENTATIVE
@@ -373,11 +421,10 @@ def test_a_read_is_confirmed_only_while_against_is_at_most_a_fifth_of_for():
 
 
 def test_the_harness_sets_status_from_the_tally_whatever_status_the_model_wrote():
-    tally = station_tally()
-    folds = tally.counts("faced_bet.fold")
+    tally = tally_of(*station_match()[:4])  # 16 bets faced, but too few hands for the hand threshold
     claimed = Notes((
         Hypothesis("never folds to bets", *tally.counts("faced_bet.continue"), "faced_bet.continue", TENTATIVE),
-        Hypothesis("folds to bets", *folds, "faced_bet.fold", CONFIRMED),
+        Hypothesis("plays every hand", *tally.counts("preflop.vpip"), "preflop.vpip", CONFIRMED),
     ))
 
     statuses = [h.status for h in verify(claimed, tally).notes.hypotheses]
@@ -406,10 +453,12 @@ def test_the_rewrite_prompt_shows_the_labelled_old_notes_the_tally_the_last_hand
     records = [hand(seed=s, hand_number=s) for s in range(7)]
     tally = tally_of(*records)
 
-    prompt = build_rewrite_prompt(PREVIOUS, tally, records[-5:], "hero")
+    previous = Notes((Hypothesis("plays few hands", 4, 1, "preflop.no_vpip", TENTATIVE),))
+
+    prompt = build_rewrite_prompt(previous, tally, records[-5:], "hero")
 
     assert "previous notes; revise or discard based on the counts below" in prompt.lower()
-    assert "plays every hand | key preflop.vpip | for " in prompt  # with the current counts (tested below)
+    assert "plays few hands | key preflop.no_vpip | for " in prompt  # with the current counts (tested below)
     assert tally.render() in prompt
     for record in records[-5:]:
         assert render_hand(record, "hero") in prompt
@@ -422,8 +471,11 @@ def test_the_rewrite_prompt_shows_the_labelled_old_notes_the_tally_the_last_hand
 def test_the_rewrite_prompt_says_to_cite_the_key_whose_outcome_supports_the_read_with_worked_examples():
     prompt = build_rewrite_prompt(Notes(), tally_of(hand()), [hand()], "hero")
 
-    assert "cite a listed key whose outcome supports" in prompt
+    assert "Cite only a key line listed in the tally above" in prompt
+    assert 'a "rarely" or "never" line must cite the listed opposite key' in prompt
+    assert "cite the listed key whose outcome supports" in prompt
     assert "only the one that happened more often is listed" in prompt
+    assert "keys with no opportunities yet are not listed" in prompt
     for read, key in (
         ("never folds to bets", "faced_bet.continue"),
         ("folds to most bets", "faced_bet.fold"),
@@ -468,8 +520,8 @@ def test_a_reply_that_copies_a_tally_line_from_the_rewrite_prompt_verbatim_verif
     assert memory.notes.hypotheses[0].status == CONFIRMED
 
 
-def test_the_memory_version_is_memory_v3_since_the_tally_lines_and_previous_notes_changed():
-    assert MEMORY_VERSION == "memory-v3"
+def test_the_memory_version_is_memory_v4_since_reads_citing_an_unlisted_key_are_dropped():
+    assert MEMORY_VERSION == "memory-v4"
 
 
 def test_the_first_rewrite_prompt_says_there_are_no_previous_notes():
@@ -665,9 +717,10 @@ def test_applying_a_rewrite_logs_old_raw_parsed_and_verified_notes_the_tally_and
     assert logged["parsed_notes"][1]["text"] == "bluffs a lot"
     assert logged["tally"] == memory.tally.snapshot()
     assert logged["flags"] == {
-        "count_mismatch": True, "unverifiable": True, "parse_failed": False, "truncated": False,
-        "junk_lines": True, "dropped_lines": False,
+        "count_mismatch": True, "unverifiable": True, "unlisted_key": False, "parse_failed": False,
+        "truncated": False, "junk_lines": True, "dropped_lines": False,
     }
+    assert logged["unlisted_keys"] == []
     assert logged["count_mismatches"][0]["cited"] == [3, 0]
     assert logged["unverifiable"] == ["bluffs a lot"]
     assert logged["junk_lines"] == ["Notes:"]
@@ -694,6 +747,23 @@ def test_a_rewrite_that_does_not_parse_keeps_the_old_reads_re_verified_against_t
     assert event.old_notes == event.parsed_notes == [dataclasses.asdict(h) for h in kept.hypotheses]
     assert memory.notes == Notes((Hypothesis("plays every hand", *now, "preflop.vpip", CONFIRMED),))
     assert event.verified_notes == [dataclasses.asdict(h) for h in memory.notes.hypotheses]
+
+
+def test_a_rewrite_that_does_not_parse_drops_an_old_read_whose_key_is_no_longer_listed_and_logs_it():
+    memory = MemoryState("hero")
+    for number in range(2):  # both deals of seed 1: the opponent calls the raise
+        memory.observe(hand(seed=1, hand_number=number, hero=["raise_pot"], villain=["call"]))
+    memory.apply_rewrite("calls raises | key faced_bet.call | for 2 | against 0")
+    assert [h.text for h in memory.notes.hypotheses] == ["calls raises"]
+    for seed, number in ((2, 2), (2, 3), (3, 4), (3, 5)):  # then folds to four raises
+        memory.observe(hand(seed=seed, hand_number=number, hero=["raise_pot"], villain=["fold"]))
+    assert "faced_bet.call" not in memory.tally.listed_keys()
+
+    event = memory.apply_rewrite("I have no idea.")
+
+    assert event.flags["parse_failed"] and event.flags["unlisted_key"]
+    assert memory.notes == Notes()
+    assert event.unlisted_keys == [{"text": "calls raises", "opportunity_key": "faced_bet.call"}]
 
 
 # ---------- Restoring on resume ----------
