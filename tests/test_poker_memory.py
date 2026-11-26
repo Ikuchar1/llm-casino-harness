@@ -175,6 +175,41 @@ def test_over_a_40_hand_match_against_the_calling_station_the_tally_shows_it_fol
     assert f"faced a bet {others} times: folded 0, called {others}, raised 0" in tally.render()
 
 
+def test_the_tally_text_lists_only_the_side_of_each_pair_the_calling_station_did_more_often():
+    tally = tally_of(*station_match())
+
+    text = tally.render()
+
+    faced = sum(tally.counts("faced_bet.continue"))
+    assert f"faced_bet.continue {faced} of {faced}" in text
+    assert f"faced_bet.no_raise {faced} of {faced}" in text
+    assert "faced_bet.continue.flop" in text
+    assert "faced_bet.raise" not in text and "faced_bet.fold" not in text
+    assert "checked_to.check" in text and "checked_to.bet" not in text
+    assert "faced_bet.call" in text  # not one of a pair: listed as before
+
+
+def test_the_tally_text_lists_no_vpip_and_not_vpip_for_a_rock_that_plays_few_hands():
+    records = play_match(match_seeds(7, 20), {"hero": Aggressor(), "villain": make_bot("rock")})
+    tally = tally_of(*records)
+    played, skipped = tally.counts("preflop.vpip")
+    assert skipped > played  # the rock folds most hands preflop
+
+    text = tally.render()
+
+    assert f"preflop.no_vpip {skipped} of {played + skipped}" in text
+    assert "preflop.vpip" not in text
+
+
+def test_the_tally_text_lists_both_sides_of_a_pair_that_is_tied():
+    called = hand(seed=1, hand_number=0, hero=["raise_pot"], villain=["call"])
+    folded = hand(seed=2, hand_number=1, hero=["raise_pot"], villain=["fold"])
+
+    text = tally_of(called, folded).render()
+
+    assert "preflop.vpip 1 of 2" in text and "preflop.no_vpip 1 of 2" in text
+
+
 # ---------- Hypotheses and notes ----------
 
 
@@ -372,7 +407,8 @@ def test_the_rewrite_prompt_shows_the_labelled_old_notes_the_tally_the_last_hand
 def test_the_rewrite_prompt_says_to_cite_the_key_whose_outcome_supports_the_read_with_worked_examples():
     prompt = build_rewrite_prompt(Notes(), tally_of(hand()), [hand()], "hero")
 
-    assert "cite the key whose outcome supports" in prompt
+    assert "cite a listed key whose outcome supports" in prompt
+    assert "only the one that happened more often is listed" in prompt
     for read, key in (
         ("never folds to bets", "faced_bet.continue"),
         ("folds to most bets", "faced_bet.fold"),

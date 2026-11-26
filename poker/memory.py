@@ -93,38 +93,54 @@ class OpponentTally:
         happened, against = self.counts(key)
         return f"{key} {happened} of {happened + against}"
 
+    def _dominant(self, *pairs: tuple[str, str], suffix: str = "") -> str:
+        """The keys to list for these outcome pairs: each pair's more frequent side, both if tied.
+
+        Lists only keys a read can be CONFIRMED on, so a model can't cite the low-count side
+        for a "rarely X" read (the full tally still verifies any key cited).
+        """
+        shown: list[str] = []
+        for first, second in pairs:
+            a, b = first + suffix, second + suffix
+            yes_a, yes_b = self._yes[a], self._yes[b]
+            shown += [a, b] if yes_a == yes_b else [a if yes_a > yes_b else b]
+        return ", ".join(self._of(key) for key in shown)
+
     def render(self) -> str:
-        """Short text for the rewrite prompt. 'key X of N' means for X, against N - X."""
+        """Short text for the rewrite prompt. 'key X of N' means for X, against N - X.
+
+        Of each complementary pair of keys (vpip/no_vpip, fold/continue, raise/no_raise,
+        bet/check) only the side that happened more often is listed, both when tied.
+        """
         lines = [
             f"hands dealt: {self.hands}",
-            f"put money in voluntarily preflop: {self._of('preflop.vpip')} hands, {self._of('preflop.no_vpip')}",
-            f"raised preflop: {self._of('preflop.raise')} hands, {self._of('preflop.no_raise')}",
+            f"preflop, put money in voluntarily or not: {self._dominant(('preflop.vpip', 'preflop.no_vpip'))} hands",
+            f"preflop, raised or not: {self._dominant(('preflop.raise', 'preflop.no_raise'))} hands",
         ]
         faced = self._opportunities["faced_bet.fold"]
         fold, call, raised = (self._yes[f"faced_bet.{name}"] for name in ("fold", "call", "raise"))
         lines.append(f"faced a bet {faced} times: folded {fold}, called {call}, raised {raised}")
-        lines.append("  " + ", ".join(self._of(f"faced_bet.{name}") for name in FACED_BET_OUTCOMES))
-        by_street = [
-            f"{street} {self._opportunities[f'faced_bet.fold.{street}']} (folded {self._yes[f'faced_bet.fold.{street}']},"
-            f" called {self._yes[f'faced_bet.call.{street}']}, raised {self._yes[f'faced_bet.raise.{street}']})"
-            for street in STREETS
-            if self._opportunities[f"faced_bet.fold.{street}"]
-        ]
-        if by_street:
-            lines.append("  by street (keys like faced_bet.fold.flop): " + "; ".join(by_street))
+        faced_pairs = (("faced_bet.fold", "faced_bet.continue"), ("faced_bet.raise", "faced_bet.no_raise"))
+        lines.append("  " + self._dominant(*faced_pairs) + ", " + self._of("faced_bet.call"))
+        for street in STREETS:
+            if self._opportunities[f"faced_bet.fold.{street}"]:
+                lines.append(
+                    f"  {street} {self._opportunities[f'faced_bet.fold.{street}']} times: "
+                    + self._dominant(*faced_pairs, suffix=f".{street}") + ", " + self._of(f"faced_bet.call.{street}")
+                )
         chances = self._opportunities["checked_to.bet"]
         lines.append(
             f"no bet to face after the flop {chances} times: bet {self._yes['checked_to.bet']},"
             f" checked {self._yes['checked_to.check']}"
         )
-        lines.append("  " + ", ".join(self._of(f"checked_to.{name}") for name in CHECKED_TO_OUTCOMES))
-        by_street = [
-            f"{street} {self._opportunities[f'checked_to.bet.{street}']} (bet {self._yes[f'checked_to.bet.{street}']})"
-            for street in POSTFLOP_STREETS
-            if self._opportunities[f"checked_to.bet.{street}"]
-        ]
-        if by_street:
-            lines.append("  by street (keys like checked_to.bet.flop): " + "; ".join(by_street))
+        checked_pair = ("checked_to.bet", "checked_to.check")
+        lines.append("  " + self._dominant(checked_pair))
+        for street in POSTFLOP_STREETS:
+            if self._opportunities[f"checked_to.bet.{street}"]:
+                lines.append(
+                    f"  {street} {self._opportunities[f'checked_to.bet.{street}']} times: "
+                    + self._dominant(checked_pair, suffix=f".{street}")
+                )
         lines.append(f"went to showdown: {self._of('showdown.reached')} hands that saw a flop")
         if self.showdowns:
             shown = [f"hand {s.hand_number} {' '.join(s.cards)} on {' '.join(s.board)}" for s in self.showdowns[-SHOWN_HANDS:]]
@@ -383,7 +399,7 @@ Rewrite your notes in full from the evidence below. Do not just add to the old n
 Previous notes; revise or discard based on the counts below:
 {old}
 
-Opponent tally after {tally.hands} hands (counted by the harness from what you could see; "key X of N" means for X, against N - X):
+Opponent tally after {tally.hands} hands (counted by the harness from what you could see; "key X of N" means for X, against N - X; of each pair of opposite keys, like faced_bet.fold and faced_bet.continue, only the one that happened more often is listed, both when tied):
 {tally.render()}
 
 Last {len(recent_hands)} hands ("opp" is your opponent):
@@ -392,7 +408,7 @@ Last {len(recent_hands)} hands ("opp" is your opponent):
 Write at most {MAX_HYPOTHESES} hypotheses about how the opponent plays, one per line, in exactly this format:
 <what the opponent does> | key <tally key> | for <N> | against <M>
 Each line must cite one tally key from above and copy its for and against counts: for counts the times that key's outcome happened, against the times it didn't.
-Always cite the key whose outcome supports your line, so a high for count backs it up. For example:
+Always cite a listed key whose outcome supports your line, so a high for count backs it up; for a "rarely" or "never" line, cite the opposite key. For example:
 - "never folds to bets" cites faced_bet.continue
 - "folds to most bets" cites faced_bet.fold
 - "always bets when checked to" cites checked_to.bet
