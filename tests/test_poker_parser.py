@@ -32,6 +32,21 @@ def test_a_menu_number_picks_that_menu_item():
     assert parse_choice('{"action": 2}', FACING_A_BET).action == "call"
 
 
+def test_a_number_that_starts_a_longer_answer_is_not_read_as_a_menu_number():
+    for reply in ("ACTION: 1/2 pot", "ACTION: 3-bet", "ACTION: 2x pot"):
+        for menu in (FACING_A_BET, NO_BET):
+            result = parse_choice(reply, menu)
+            assert (result.action, result.status) == (None, "unparseable"), (reply, menu[0].action)
+
+
+def test_a_menu_number_with_a_name_after_it_that_disagrees_is_unparseable():
+    for reply in ("ACTION: 2. fold", "ACTION: 3) raise_pot"):
+        result = parse_choice(reply, FACING_A_BET)
+        assert (result.action, result.status) == (None, "unparseable"), reply
+    assert parse_choice("ACTION: 2) call", FACING_A_BET).action == "call"
+    assert parse_choice("ACTION: 2.", FACING_A_BET).action == "call"
+
+
 def test_a_menu_number_past_the_end_of_the_menu_is_off_menu():
     result = parse_choice("ACTION: 9", FACING_A_BET)
 
@@ -58,16 +73,27 @@ def test_without_json_or_an_action_line_a_lone_action_name_on_the_last_line_is_r
     assert (result.action, result.status, result.method) == ("raise_pot", "ok", "loose")
 
 
-def test_loosely_the_last_action_name_mentioned_wins():
-    result = parse_choice("I could fold here, but with a flush draw I will call.", FACING_A_BET)
+def test_action_words_in_free_text_are_never_used_as_a_guess():
+    cut_off = ("With top pair I should not fold. Calling is fine, but a raise_pot gets value, "
+               "unless the opponent will fold")
+    for reply in ("I would call here rather than fold.", cut_off,
+                  "I will not fold; the pot is big, so call is my choice, no all in.",
+                  "The pot is 18 and I hold a draw. I pick option 2."):
+        result = parse_choice(reply, FACING_A_BET)
+        assert (result.action, result.status) == (None, "unparseable"), reply
 
-    assert (result.action, result.method) == ("call", "loose")
 
-
-def test_loosely_a_menu_number_counts_only_as_an_option_or_a_bare_number_on_its_own_line():
-    assert parse_choice("The pot is 18 and I hold a draw. I pick option 2.", FACING_A_BET).action == "call"
-    assert parse_choice("The pot is 18, so I will go with\n2", FACING_A_BET).action == "call"
+def test_loosely_a_menu_number_counts_only_alone_on_the_last_line():
+    assert parse_choice("The pot is 18, so I will go with\n2\n", FACING_A_BET).action == "call"
+    assert parse_choice("I pick\n2\nbecause the price is right", FACING_A_BET).status == "unparseable"
     assert parse_choice("The pot is 18 chips and I have 9 outs.", FACING_A_BET).status == "unparseable"
+
+
+def test_a_reply_cut_off_by_the_token_limit_with_no_action_line_is_truncated_no_action():
+    for reply in ("I think the best play is to", "My reasoning so far:\ncall", '{"action": "call"} and then'):
+        result = parse_choice(reply, FACING_A_BET, done_reason="length")
+        assert (result.action, result.status, result.method) == (None, "truncated_no_action", None), reply
+    assert parse_choice("Long reasoning.\nACTION: call", FACING_A_BET, done_reason="length").action == "call"
 
 
 def test_garbage_parses_to_none_and_is_marked_unparseable():

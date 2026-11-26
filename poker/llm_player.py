@@ -7,7 +7,7 @@ result, timing); the runner merges them into the decision log rows.
 
 When the reply names a real action that is off the menu, decide() still returns that
 name: the engine then applies its fallback (check, or fold if check is illegal), or the
-item a dropped pot raise collapsed into. An unparseable reply returns None (fallback).
+item a dropped pot raise collapsed into. An unparseable or cut-off reply returns None (fallback).
 """
 
 from dataclasses import dataclass
@@ -36,7 +36,7 @@ class PokerDecisionDetail:
     user_prompt: str
     raw_response: str
     parsed_action: Optional[str]  # the menu action, None when parsing failed
-    parse_status: str  # "ok", "mapped", "off_menu" or "unparseable"
+    parse_status: str  # "ok", "mapped", "off_menu", "unparseable" or "truncated_no_action"
     parse_method: Optional[str]  # "json", "action_line", "loose", None
     named_action: Optional[str]  # what the reply named, even off the menu
     mapping: Optional[str]  # e.g. "check/call -> call"
@@ -64,7 +64,7 @@ class PokerLLMPlayer:
         user_prompt = build_user_prompt(state, notes=self.notes)
         # Errors from the client (e.g. Ollama down) propagate and stop the run.
         reply = self.client.chat(self.system_prompt, user_prompt)
-        result = parse_choice(reply.content, state.menu)
+        result = parse_choice(reply.content, state.menu, reply.done_reason)
         self._details.append(PokerDecisionDetail(
             user_prompt=user_prompt,
             raw_response=reply.content,

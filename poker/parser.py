@@ -3,14 +3,17 @@
 Tried in order (docs/research/poker-eval-methods.md, "LLM handling"):
 1. JSON: the last {...} object in the reply with an "action" key.
 2. The ACTION line: the last `ACTION: <answer>` marker (":", "-" or "：").
-3. Loose: the last full action name anywhere in the reply, or a menu number written as
-   "option 2" / "choice 2" or alone on its line.
-Nothing found -> "unparseable".
+3. Loose: only when the last non-empty line is nothing but a full action name or a menu
+   number. Action words anywhere else in the reply are never used as a guess.
+Nothing found -> "unparseable". A reply cut off by the token limit (done_reason
+"length") with no ACTION line -> "truncated_no_action", before any other step.
 
 Markdown * and ` are ignored, and so is case; "_", "-" and spaces are interchangeable
 ("all-in", "raise pot"). The answer must start with an action phrase (PHRASES) or a
-menu number (1 = the first item; a number wins over any name after it). A number
-past the end of the menu is off-menu. Synonyms are mapped only onto an item that is
+menu number (1 = the first item). A number counts only alone or followed by "." or ")";
+a name after it must agree with the numbered item, else the answer is unparseable
+("1/2 pot", "3-bet" and "2. fold" with call at 2 are all unparseable). A number past
+the end of the menu is off-menu. Synonyms are mapped only onto an item that is
 on the menu (SYNONYM_TARGETS), and the mapping is recorded.
 """
 
@@ -22,20 +25,25 @@ from typing import Optional
 from poker.engine import MenuItem
 
 # Bump when the parsing rules change; logged and checked on resume.
-PARSER_VERSION = "poker-parser-v1"
+# v2: a number counts only alone or before "."/")"; loose only for a lone last line;
+#     cut-off replies with no ACTION line = truncated_no_action.
+PARSER_VERSION = "poker-parser-v2"
 
 OK = "ok"
+TRUNCATED = "truncated_no_action"
 
 _JSON_OBJECT = re.compile(r"\{[^{}]*\}")
 # "action" as a whole word, a separator, then the rest of that line.
 _ACTION_LINE = re.compile(r"\baction[ \t]*[:\-\uff1a][ \t]*([^\n]*)", re.IGNORECASE)
 _MARKDOWN = re.compile(r"[*`]")
-# Loose step: full action names only (never a bare "pot"), and menu numbers only as
-# "option 2" / "choice 2" or a number alone on its line, so chip counts are not read.
-_LOOSE_NAME = re.compile(
-    r"\b(check\s*(?:/|or)\s*call|raise[ _-]half[ _-]pot|raise[ _-]pot|all[ _-]?in|fold|check|call)\b"
+# Loose step: the last non-empty line, when it is nothing but a full action name (never
+# a bare "pot") or a menu number.
+_LOOSE_LINE = re.compile(
+    r"check\s*(?:/|or)\s*call|raise[ _-]half[ _-]pot|raise[ _-]pot|all[ _-]?in|fold|check|call|#?\d+"
 )
-_LOOSE_NUMBER = re.compile(r"\b(?:option|choice|number)\s*#?\s*(\d+)\b|^[ \t]*#?(\d+)\.?[ \t]*$", re.MULTILINE)
+
+# A menu number as an answer: the number alone, or followed by "." or ")" and the rest.
+_MENU_NUMBER = re.compile(r"^\s*#?(\d+)\s*(?:[.)](.*))?$", re.DOTALL)
 
 CHECK_OR_CALL = "check/call"
 
@@ -69,7 +77,8 @@ class ParseResult:
 
     action: the menu action, or None when parsing failed.
     status: "ok", "mapped" (a synonym was mapped onto a menu item), "off_menu" (a
-        recognised action that isn't on the menu) or "unparseable".
+        recognised action that isn't on the menu), "unparseable", or
+        "truncated_no_action" (cut off by the token limit before an ACTION line).
     method: which step read the answer ("json", "action_line", "loose"), None if none did.
     named: the action the reply named, canonical, even when it is off the menu.
     mapping: for "mapped", what was mapped onto what, e.g. "check/call -> call".
@@ -82,8 +91,17 @@ class ParseResult:
     mapping: Optional[str] = None
 
 
-def parse_choice(reply: str, menu: tuple[MenuItem, ...]) -> ParseResult:
-    """Parse a reply against the menu it answered."""
+def parse_choice(reply: str, menu: tuple[MenuItem, ...], done_reason: Optional[str] = None) -> ParseResult:
+    """Parse a reply against the menu it answered.
+
+    done_reason is Ollama's reason the reply ended ("stop" or "length"). A reply cut off
+    by the token limit with no ACTION line is "truncated_no_action": whatever action
+    words its unfinished reasoning mentioned are not the answer.
+    """
+    cleaned = _MARKDOWN.sub("", reply)
+    lines = _ACTION_LINE.findall(cleaned)
+    if done_reason == "length" and not lines:
+        return ParseResult(None, TRUNCATED)
     for match in reversed(_JSON_OBJECT.findall(reply)):
         try:
             value = json.loads(match)
@@ -91,8 +109,6 @@ def parse_choice(reply: str, menu: tuple[MenuItem, ...]) -> ParseResult:
             continue
         if isinstance(value, dict) and "action" in value:
             return _resolve(str(value["action"]), menu, "json")
-    cleaned = _MARKDOWN.sub("", reply)
-    lines = _ACTION_LINE.findall(cleaned)
     if lines:
         return _resolve(lines[-1], menu, "action_line")
     loose = _last_loose_answer(cleaned.lower())
@@ -102,10 +118,15 @@ def parse_choice(reply: str, menu: tuple[MenuItem, ...]) -> ParseResult:
 
 
 def _last_loose_answer(text: str) -> Optional[str]:
-    """The last action name or menu number in free text, or None."""
-    matches = [(m.start(), m.group(1)) for m in _LOOSE_NAME.finditer(text)]
-    matches += [(m.start(), m.group(1) or m.group(2)) for m in _LOOSE_NUMBER.finditer(text)]
-    return max(matches)[1] if matches else None
+    """The last non-empty line, when it is only an action name or a menu number; else None.
+
+    Action words anywhere else in the reply are never used as a guess.
+    """
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if not lines:
+        return None
+    last = lines[-1].rstrip(".!")
+    return last if _LOOSE_LINE.fullmatch(last) else None
 
 
 def _words(text: str) -> list[str]:
@@ -125,10 +146,7 @@ def _resolve(answer: str, menu: tuple[MenuItem, ...], method: str) -> ParseResul
     actions = [item.action for item in menu]
     words = _words(answer)
     if words and words[0].isdigit():
-        number = int(words[0])
-        if 1 <= number <= len(menu):
-            return ParseResult(actions[number - 1], OK, method, actions[number - 1])
-        return ParseResult(None, "off_menu", method)
+        return _resolve_number(answer, actions, method)
     named = _phrase(words)
     if named is None:
         return ParseResult(None, "unparseable", method)
@@ -138,3 +156,22 @@ def _resolve(answer: str, menu: tuple[MenuItem, ...], method: str) -> ParseResul
     if target is not None:
         return ParseResult(target, "mapped", method, named, f"{named} -> {target}")
     return ParseResult(None, "off_menu", method, named)
+
+
+def _resolve_number(answer: str, actions: list[str], method: str) -> ParseResult:
+    """A menu number: alone ("3"), or followed by "." / ")" and, optionally, a name that agrees.
+
+    Anything else after the number ("1/2 pot", "3-bet") is unparseable, and so is a name
+    that disagrees with the numbered item ("2. fold" when item 2 is call).
+    """
+    match = _MENU_NUMBER.match(answer)
+    if match is None:
+        return ParseResult(None, "unparseable", method)
+    number, rest = int(match.group(1)), match.group(2) or ""
+    if not 1 <= number <= len(actions):
+        return ParseResult(None, "off_menu", method)
+    action = actions[number - 1]
+    named = _phrase(_words(rest))
+    if named is not None and named != action and action not in SYNONYM_TARGETS.get(named, ()):
+        return ParseResult(None, "unparseable", method)
+    return ParseResult(action, OK, method, action)

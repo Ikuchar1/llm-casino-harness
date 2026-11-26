@@ -55,6 +55,22 @@ def test_an_off_menu_answer_is_passed_on_so_the_engine_falls_back_and_the_detail
     assert (detail.parsed_action, detail.parse_status, detail.named_action) == (None, "off_menu", "check")
 
 
+class CutOffClient(FakeChatClient):
+    """Every reply hit the token limit."""
+
+    def chat(self, system, user):
+        reply = super().chat(system, user)
+        return ChatReply(content=reply.content, done_reason="length", eval_count=400, latency_s=0.5)
+
+
+def test_a_reply_cut_off_before_its_action_line_falls_back_and_is_marked_truncated():
+    player = PokerLLMPlayer(CutOffClient(["My reasoning so far:\ncall"]))
+
+    assert player.decide(flop_state()) is None
+    detail, = player.take_hand_details()
+    assert (detail.parsed_action, detail.parse_status, detail.done_reason) == (None, "truncated_no_action", "length")
+
+
 def test_the_memory_setup_is_not_built_yet():
     with pytest.raises(NotImplementedError, match="memory"):
         PokerLLMPlayer(FakeChatClient([]), SETUPS["memory"])
