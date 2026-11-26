@@ -4,8 +4,13 @@ Hand-built states carry only the menu items a test needs. Amounts are chips to c
 or the raise-to total for raises.
 """
 
+import random
+import time
+
 from poker.bots import BOTS, make_bot
+from poker.cards import make_deck
 from poker.engine import Action, DecisionState, MenuItem
+from poker.hands import equity_vs_random
 
 
 def state(
@@ -151,3 +156,74 @@ def test_the_rock_bets_a_flush_made_with_a_hole_card():
     flush = state(hole_cards=("9h", "2h"), board=("Kh", "Jh", "4h", "Ac"), street="turn", pot=12, to_call=0)
 
     assert make_bot("rock").decide(flush) == "raise_two_thirds_pot"
+
+
+# ---------- Control ----------
+
+
+def test_the_control_folds_trash_to_a_pot_size_bet():
+    trash = state(hole_cards=("7c", "2d"), board=("Ks", "Jd", "4c", "9h"), street="turn", pot=40, to_call=20)
+
+    assert make_bot("control").decide(trash) == "fold"
+
+
+def test_the_control_raises_the_nuts():
+    nuts = state(hole_cards=("As", "Ks"), board=("Qs", "Js", "Ts"), street="flop", pot=20, to_call=8)
+
+    assert make_bot("control").decide(nuts) == "raise_two_thirds_pot"
+
+
+def test_the_control_calls_a_small_bet_with_a_draw_that_has_the_pot_odds():
+    # A gutshot plus two overcards has well over the 1/6 equity a 1/4-pot bet asks for.
+    draw = state(hole_cards=("Ah", "Kd"), board=("Qs", "Tc", "4h"), street="flop", pot=25, to_call=5)
+
+    assert make_bot("control").decide(draw) == "call"
+
+
+def test_the_control_bluffs_about_five_percent_of_spots_checked_to_it_and_only_those():
+    # Weak flops only (equity well under the raise line), so every bet is a bluff.
+    rng = random.Random(3)
+    bets = spots = 0
+    bot = make_bot("control")
+    for _ in range(400):
+        deck = make_deck(rng.randrange(10**9))
+        hole, board = deck[:2], deck[2:5]
+        if equity_vs_random(hole, board, 200, random.Random(0)) > 0.55:
+            continue
+        spots += 1
+        checked_to = state(hole_cards=hole, board=board, street="flop", pot=12, to_call=0)
+        bets += bot.decide(checked_to) == "raise_two_thirds_pot"
+        facing = state(hole_cards=hole, board=board, street="flop", pot=36, to_call=24)
+        assert bot.decide(facing) != "raise_two_thirds_pot"
+
+    assert 0.02 < bets / spots < 0.09, (bets, spots)
+
+
+def test_a_control_decision_takes_under_20_ms_on_average():
+    spot = state(hole_cards=("Ah", "Kd"), board=("Qs", "Tc", "4h"), street="flop", pot=25, to_call=5)
+    bot = make_bot("control")
+    started = time.perf_counter()
+    for _ in range(20):
+        bot.decide(spot)
+
+    assert (time.perf_counter() - started) / 20 < 0.020
+
+
+# ---------- Every bot ----------
+
+
+def test_the_registry_names_all_four_bots_and_the_factory_builds_each_one_fresh():
+    assert set(BOTS) == {"calling_station", "maniac", "rock", "control"}
+    assert all(make_bot(name).name == name for name in BOTS)
+    assert make_bot("rock") is not make_bot("rock")
+
+
+def test_every_bot_gives_the_same_choice_for_the_same_state_even_from_a_fresh_instance():
+    spots = [
+        state(hole_cards=("Ah", "Kd"), board=("Qs", "Tc", "4h"), street="flop", pot=25, to_call=5),
+        state(hole_cards=("8h", "7h"), board=("Qs", "Tc", "4h", "2c"), street="turn", pot=30, to_call=0),
+        state(hole_cards=("9c", "9d"), to_call=1),
+    ]
+    for name in BOTS:
+        first, second = make_bot(name), make_bot(name)
+        assert [first.decide(spot) for spot in spots] == [second.decide(spot) for spot in spots] == [first.decide(spot) for spot in spots]

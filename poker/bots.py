@@ -6,11 +6,13 @@ the engine adds the bot-only sizes to their menu: one fixed bet size, 2/3 pot
 (already raised to the min raise when 2/3 pot is below it), plus the min raise.
 """
 
+import hashlib
+import random
 from typing import Optional
 
 from poker.cards import RANKS
 from poker.engine import CALL, CHECK, FOLD, MIN_RAISE, RAISE_TWO_THIRDS_POT, DecisionState
-from poker.hands import TWO_PAIR, category
+from poker.hands import TWO_PAIR, category, equity_vs_random
 
 
 class _Bot:
@@ -67,6 +69,53 @@ def _is_premium(hole_cards: tuple[str, ...]) -> bool:
     return high == "A" and low in _PREMIUM_ACE_KICKERS
 
 
+class Control(_Bot):
+    """The no-leak control: plain equity-threshold play with no single habit (not GTO).
+
+    Equity is Monte Carlo against a random hand, seeded from a hash of the cards so the
+    same spot always gets the same answer. Raises 2/3 pot above RAISE_EQUITY, calls with
+    the pot odds, else checks or folds. When checked to, the same hash also picks about
+    BLUFF_SHARE of spots to bet 2/3 pot regardless.
+    """
+
+    name = "control"
+
+    def decide(self, state: DecisionState) -> Optional[str]:
+        equity = equity_vs_random(list(state.hole_cards), list(state.board), EQUITY_SAMPLES, _card_rng(state))
+        if equity > RAISE_EQUITY:
+            return _bet_or_call(state)
+        if not state.to_call and _is_bluff_spot(state):
+            return _bet_or_call(state)
+        if equity >= _pot_odds(state):
+            return _check_or_call(state)
+        return _check_or_fold(state)
+
+
+EQUITY_SAMPLES = 500  # about 6 ms a decision
+RAISE_EQUITY = 0.65
+BLUFF_SHARE = 0.05
+
+
+def _card_digest(state: DecisionState) -> bytes:
+    """A stable hash of the hole cards and board (Python's hash() changes between runs)."""
+    cards = ",".join(sorted(state.hole_cards)) + "|" + ",".join(state.board)
+    return hashlib.sha256(cards.encode()).digest()
+
+
+def _card_rng(state: DecisionState) -> random.Random:
+    return random.Random(int.from_bytes(_card_digest(state)[:8], "big"))
+
+
+def _is_bluff_spot(state: DecisionState) -> bool:
+    """About BLUFF_SHARE of card spots, from hash bytes the equity seed doesn't use."""
+    return int.from_bytes(_card_digest(state)[8:16], "big") / 2**64 < BLUFF_SHARE
+
+
+def _pot_odds(state: DecisionState) -> float:
+    """The share of the final pot this call pays for: to_call / (pot + to_call)."""
+    return state.to_call / (state.pot + state.to_call)
+
+
 RAISE_CAP = 3
 _CALM_ACTIONS = (FOLD, CHECK, CALL)
 
@@ -105,7 +154,7 @@ def _check_or_fold(state: DecisionState) -> str:
     return FOLD if state.to_call else CHECK
 
 
-BOTS = {bot.name: bot for bot in (CallingStation, Maniac, Rock)}
+BOTS = {bot.name: bot for bot in (CallingStation, Maniac, Rock, Control)}
 
 
 def make_bot(name: str) -> _Bot:
