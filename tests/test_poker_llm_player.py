@@ -228,3 +228,14 @@ def test_a_re_check_naming_a_raise_the_engine_applies_as_the_call_is_played_and_
     assert [item.action for item in decision.state.menu] == ["fold", "call"]
     assert (decision.choice, decision.action, decision.fallback, decision.clamped) == ("all_in", "call", False, True)
     assert (detail.self_check["final_action"], detail.self_check["flipped"]) == ("all_in", True)
+
+
+def test_a_first_answer_naming_a_raise_the_engine_applies_as_the_call_is_not_a_first_pass_fallback():
+    from poker.self_check import recheck_prompt
+
+    decision, detail = facing_a_shove(["ACTION: all_in", "Still a shove.\nACTION: all_in"])
+
+    assert (decision.choice, decision.action, decision.fallback, decision.clamped) == ("all_in", "call", False, True)
+    assert detail.self_check["first_action"] == "all_in"
+    assert detail.self_check["recheck_prompt"] == recheck_prompt("all_in")
+    assert detail.self_check["flipped"] is False

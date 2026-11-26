@@ -129,7 +129,8 @@ class PokerLLMPlayer:
     def _re_check(self, state: DecisionState, user_prompt: str, first_raw: str, first: ParseResult,
                   first_choice: Optional[str]) -> tuple[dict[str, Any], ParseResult]:
         """Continue the conversation with the generic re-check; return its log and the second parse."""
-        prompt = recheck_prompt(first.action)
+        first_usable = _usable(first, state)
+        prompt = recheck_prompt(first_usable)
         messages = [
             {"role": "system", "content": self.system_prompt},
             {"role": "user", "content": user_prompt},
@@ -140,7 +141,7 @@ class PokerLLMPlayer:
         second = parse_choice(reply.content, state.menu, reply.done_reason)
         final = final_choice(first_choice, _usable(second, state))
         log = {
-            "first_action": first.action,
+            "first_action": first_usable,
             "first_parse_status": first.status,
             "recheck_prompt": prompt,
             "second_raw": reply.content,
