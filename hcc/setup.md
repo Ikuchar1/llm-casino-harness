@@ -148,3 +148,71 @@ per decision, so those two can approach 8 h. A longer limit can wait longer in t
 ```bash
 sbatch --time=16:00:00 hcc/full_run.sbatch v3 qwen2.5:14b self
 ```
+
+## Poker headline runs (`hcc/submit_poker.sh`)
+
+Eight matches, one SLURM job each: `qwen2.5:7b`, setups `plain` and `memory` against the bots
+`calling_station`, `maniac`, `rock` and `control`, 500 seed pairs (1000 hands) each at seed 2026,
+so both setups are dealt the same seeds. Each job is `hcc/poker_run.sbatch <setup> <bot>`, which
+calls `scripts/run_poker.py --model qwen2.5:7b --bot <bot> --pairs 500 --seed 2026 --setup <setup>`
+with `--out results/poker_runs/qwen2.5-7b/<setup>/<bot>`. Logs: `poker_run.<jobid>.out` and
+`ollama_serve.<jobid>.log` in the repo root. Like `submit_all.sh`, it first submits one
+`hcc/pull_model.sbatch` job and every match waits for it.
+
+On the login node:
+
+```bash
+cd $NRDSTOR/llm-casino-harness
+git pull
+$NRDSTOR/envs/bj/bin/python -m pip install -r requirements.txt   # adds pokerkit==0.7.8 to the bj env
+$NRDSTOR/envs/bj/bin/python -c "import pokerkit; print(pokerkit.__name__, 'ok')"
+hcc/submit_poker.sh --dry-run    # print the 9 sbatch commands (1 pull + 8 matches) only
+hcc/submit_poker.sh              # submit them
+squeue -u $USER
+tail -n 3 poker_run.*.out        # latest progress line of each match (hands done, bb/100, ETA)
+```
+
+`hcc/poker_run.sbatch` checks `import pokerkit` before loading the model and stops with the pip
+command above if the env lacks it. A filter limits what is submitted: a setup (`plain`, `memory`), a
+bot, or both, e.g. `hcc/submit_poker.sh memory`, `hcc/submit_poker.sh rock`,
+`hcc/submit_poker.sh memory rock`.
+
+Time limits: 8 h for `plain`, 12 h for `memory`. The Mac smoke run took ~20 s/hand (~4 decisions at
+~5 s), so 1000 hands is ~5.6 h even at Mac speed; blackjack ran ~2.3 s/decision on the P100 against
+~3.7 s on the Mac, which puts a plain match nearer 3.5 h. Memory adds a rewrite call every 5 hands
+(~200 longer calls) and a longer prompt, hence 12 h.
+
+**After a timeout**, resubmit just that match with the same command; `run_poker.py` resumes from
+its folder, even halfway through a seed pair (a finished match plays 0 hands):
+
+```bash
+hcc/submit_poker.sh memory rock
+# or, without the pull job:
+sbatch --time=12:00:00 hcc/poker_run.sbatch memory rock
+```
+
+A match is done when its `hands.jsonl` has 1000 lines and the last session's `status` in
+`metadata.json` is `completed`:
+
+```bash
+wc -l results/poker_runs/qwen2.5-7b/*/*/hands.jsonl
+```
+
+**Analysis**, once all eight are done (from the repo root):
+
+```bash
+$NRDSTOR/envs/bj/bin/python scripts/analyze_poker.py \
+    results/poker_runs/qwen2.5-7b/plain/calling_station results/poker_runs/qwen2.5-7b/plain/maniac \
+    results/poker_runs/qwen2.5-7b/plain/rock results/poker_runs/qwen2.5-7b/plain/control \
+    results/poker_runs/qwen2.5-7b/memory/calling_station results/poker_runs/qwen2.5-7b/memory/maniac \
+    results/poker_runs/qwen2.5-7b/memory/rock results/poker_runs/qwen2.5-7b/memory/control \
+    --out results/poker
+$NRDSTOR/envs/bj/bin/python scripts/analyze_poker.py --compare results/poker_runs/qwen2.5-7b/plain/calling_station results/poker_runs/qwen2.5-7b/memory/calling_station --out results/poker/compare_calling_station
+$NRDSTOR/envs/bj/bin/python scripts/analyze_poker.py --compare results/poker_runs/qwen2.5-7b/plain/maniac results/poker_runs/qwen2.5-7b/memory/maniac --out results/poker/compare_maniac
+$NRDSTOR/envs/bj/bin/python scripts/analyze_poker.py --compare results/poker_runs/qwen2.5-7b/plain/rock results/poker_runs/qwen2.5-7b/memory/rock --out results/poker/compare_rock
+$NRDSTOR/envs/bj/bin/python scripts/analyze_poker.py --compare results/poker_runs/qwen2.5-7b/plain/control results/poker_runs/qwen2.5-7b/memory/control --out results/poker/compare_control
+```
+
+The first writes `results/poker/summary.json` and `summary.csv` for all eight. Each `--compare`
+gets its own folder because it writes `comparison.json` (memory minus plain on the same seed pairs)
+and would otherwise overwrite the previous bot's.
