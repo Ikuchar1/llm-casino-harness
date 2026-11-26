@@ -1,4 +1,4 @@
-"""A fast hand evaluator for the bots, for any 3 to 7 cards.
+"""A fast hand evaluator (any 3 to 7 cards) and seeded Monte Carlo equity for the bots.
 
 PokerKit has an evaluator and an equity helper, but its equity helper samples from
 Python's global `random` (so it can't be seeded per decision) and its evaluator takes
@@ -6,9 +6,10 @@ about 0.14 ms per hand, too slow for hundreds of Monte Carlo samples per decisio
 This one ranks hands the same way (tests check it against PokerKit).
 """
 
+import random
 from collections import Counter
 
-from poker.cards import RANKS
+from poker.cards import RANKS, SUITS
 
 HIGH_CARD, ONE_PAIR, TWO_PAIR, TRIPS, STRAIGHT, FLUSH, FULL_HOUSE, QUADS, STRAIGHT_FLUSH = range(9)
 
@@ -46,6 +47,24 @@ def hand_value(cards: list[str]) -> tuple[int, ...]:
     if top_count == 2:
         return (ONE_PAIR, top, *[v for v in values if v != top][:3])
     return (HIGH_CARD, *values[:5])
+
+
+def equity_vs_random(hole_cards: list[str], board: list[str], samples: int, rng: random.Random) -> float:
+    """Share of pots won (ties count half) against one random hand, by Monte Carlo.
+
+    Each sample deals the opponent two cards and the rest of the board from the unseen
+    cards. Pass a seeded `rng` for a repeatable answer.
+    """
+    known = set(hole_cards) | set(board)
+    unseen = [rank + suit for rank in RANKS for suit in SUITS if rank + suit not in known]
+    missing = 5 - len(board)
+    won = 0.0
+    for _ in range(samples):
+        drawn = rng.sample(unseen, 2 + missing)
+        full_board = [*board, *drawn[2:]]
+        mine, theirs = hand_value([*hole_cards, *full_board]), hand_value([*drawn[:2], *full_board])
+        won += 1.0 if mine > theirs else 0.5 if mine == theirs else 0.0
+    return won / samples
 
 
 def category(cards: list[str]) -> int:
