@@ -70,7 +70,8 @@ class PokerDecisionDetail:
     done_reason: Optional[str]
     eval_count: Optional[int]  # tokens generated
     prompt_tokens: Optional[int]  # Ollama's prompt_eval_count (None when not reported)
-    latency_s: float
+    latency_s: float  # the first call only (self_check["latency_s"] is the re-check's)
+    total_latency_s: float  # every call this decision made: the first plus the re-check, if any
     # The full-tools setups only (None otherwise). tools: what the equity and chart lines
     # showed (_tools). self_check: the first answer, the re-check and its reply (_re_check).
     # flags: poker.self_check.flags() on the first answer, logged only, never shown to the model.
@@ -103,10 +104,12 @@ class PokerLLMPlayer:
         result = parse_choice(reply.content, state.menu, reply.done_reason)
         choice = result.action if result.action is not None else result.named
         self_check, warnings = None, None
+        total_latency = reply.latency_s
         if self.config.self_evaluation:
             # flags() is a logged-only diagnostic: the re-check stays generic (CONTEXT.md).
             warnings = flags(state, state.applied_action(choice), info)
-            self_check, second = self._re_check(state, user_prompt, reply.content, result, choice)
+            self_check, second, recheck_latency = self._re_check(state, user_prompt, reply.content, result, choice)
+            total_latency += recheck_latency
             second_choice = _usable(second, state)
             if second_choice is not None:
                 result, choice = second, second_choice
@@ -122,6 +125,7 @@ class PokerLLMPlayer:
             eval_count=reply.eval_count,
             prompt_tokens=reply.prompt_eval_count,
             latency_s=reply.latency_s,
+            total_latency_s=total_latency,
             tools=tools_log,
             self_check=self_check,
             flags=warnings,
@@ -129,8 +133,8 @@ class PokerLLMPlayer:
         return choice
 
     def _re_check(self, state: DecisionState, user_prompt: str, first_raw: str, first: ParseResult,
-                  first_choice: Optional[str]) -> tuple[dict[str, Any], ParseResult]:
-        """Continue the conversation with the generic re-check; return its log and the second parse."""
+                  first_choice: Optional[str]) -> tuple[dict[str, Any], ParseResult, float]:
+        """Continue the conversation with the generic re-check; return its log, the second parse and its latency."""
         first_usable = _usable(first, state)
         prompt = recheck_prompt(first_usable)
         messages = [
@@ -157,7 +161,7 @@ class PokerLLMPlayer:
             "prompt_tokens": reply.prompt_eval_count,
             "latency_s": round(reply.latency_s, 3),
         }
-        return log, second
+        return log, second, reply.latency_s
 
     def _tools(self, state: DecisionState, info: Optional[EquityInfo]) -> tuple[list[str], Optional[dict[str, Any]]]:
         """The tool lines for the prompt, and what they showed for the log (None when no tool is on)."""

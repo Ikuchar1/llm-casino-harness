@@ -112,6 +112,8 @@ def test_every_row_carries_the_run_identity_and_model_decisions_carry_the_llm_de
     assert first["raw_response"] == "Keep it cheap.\nACTION: check/call"
     assert (first["parse_status"], first["parse_method"], first["mapping"]) == ("mapped", "action_line", "check/call -> " + first["action"])
     assert first["prompt"].startswith("You are on the button") and first["latency_s"] == 0.25
+    assert first["total_latency_s"] == 0.25  # no re-check in the plain setup
+    assert all(row["total_latency_s"] is None for row in bot_rows)
     assert (first["prompt_tokens"], first["eval_count"]) == (640, 7)
     assert all(row["parse_status"] is None and row["raw_response"] is None for row in bot_rows)
     assert all(set(row) == set(first) for row in decisions)

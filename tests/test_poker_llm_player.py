@@ -168,6 +168,18 @@ def test_in_the_tools_setup_every_decision_is_re_checked_in_the_same_conversatio
     }
 
 
+def test_total_latency_is_the_first_call_plus_the_re_check_in_the_tools_setup_and_the_one_call_otherwise():
+    tools = PokerLLMPlayer(FakeChatClient(["ACTION: fold", "ACTION: call"]), SETUPS["tools"])
+    plain = PokerLLMPlayer(FakeChatClient(["ACTION: fold"]), SETUPS["plain"])
+    tools.decide(preflop_state())
+    plain.decide(preflop_state())
+
+    checked, = tools.take_hand_details()
+    single, = plain.take_hand_details()
+    assert (checked.latency_s, checked.total_latency_s) == (0.5, 0.75)
+    assert (single.latency_s, single.total_latency_s) == (0.5, 0.5)
+
+
 def test_an_unusable_re_check_keeps_the_first_answer_and_an_unusable_first_answer_gets_the_invalid_re_check():
     from poker.self_check import RECHECK_PROMPT_INVALID
 

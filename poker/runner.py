@@ -45,7 +45,8 @@ LLM_FIELDS = {
     "done_reason": "done_reason",
     "eval_count": "eval_count",
     "prompt_tokens": "prompt_tokens",
-    "latency_s": "latency_s",
+    "latency_s": "latency_s",  # the first call only
+    "total_latency_s": "total_latency_s",  # every call of the decision: the first plus the tools setups' re-check
     "tools": "tools",  # the tools setups only: what the equity and chart lines showed
     "self_check": "self_check",  # the tools setups only: the first answer and the re-check
     "flags": "flags",  # the tools setups only: poker.self_check.flags() on the first answer, never shown
@@ -334,8 +335,9 @@ def _decision_rows(record, details: list, identity: dict[str, Any],
     for decision, row in zip(record.decisions, decision_rows(record)):
         detail = next(pending) if details and decision.player == MODEL else None
         llm = {field: (getattr(detail, attribute) if detail else None) for field, attribute in LLM_FIELDS.items()}
-        if llm["latency_s"] is not None:
-            llm["latency_s"] = round(llm["latency_s"], 3)
+        for timing in ("latency_s", "total_latency_s"):
+            if llm[timing] is not None:
+                llm[timing] = round(llm[timing], 3)
         version = notes_version if decision.player == MODEL else None
         rows.append({**identity, **row, **llm, "notes_version": version})
     return rows
