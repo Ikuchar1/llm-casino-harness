@@ -5,9 +5,12 @@ Hands are played with scripted players through poker.engine.play_hand, so every 
 is real engine output. The model is always "hero"; the opponent is "villain".
 """
 
+import dataclasses
+import json
+import re
+
 from poker.bots import make_bot
-from poker.engine import play_hand, play_match
-from poker.runner import match_seeds
+from poker.engine import play_duplicate, play_hand, play_match
 from poker.memory import (
     CONFIRMED,
     HAND_FREQUENCY_THRESHOLD,
@@ -15,8 +18,20 @@ from poker.memory import (
     MAX_AGAINST_SHARE,
     NOTES_BLOCK_CHAR_CAP,
     TENTATIVE,
-    WORD_BUDGET, Hypothesis, build_rewrite_prompt, Notes, OpponentTally, parse_line, parse_rewrite, render_hand, render_notes_block, status_for, verify,
+    WORD_BUDGET,
+    Hypothesis,
+    MemoryState,
+    Notes,
+    OpponentTally,
+    build_rewrite_prompt,
+    parse_line,
+    parse_rewrite,
+    render_hand,
+    render_notes_block,
+    status_for,
+    verify,
 )
+from poker.runner import match_seeds
 
 
 class ScriptedPlayer:
@@ -31,6 +46,18 @@ class ScriptedPlayer:
         names = [item.action for item in state.menu]
         return "check" if "check" in names else "call"
 
+
+class Aggressor(ScriptedPlayer):
+    """Bets or raises pot whenever it can, else calls."""
+
+    def decide(self, state):
+        names = [item.action for item in state.menu]
+        return "raise_pot" if "raise_pot" in names else "call"
+
+
+def station_match():
+    """40 hands (20 duplicate pairs) of an always-raising hero against the calling station."""
+    return play_match(match_seeds(7, 20), {"hero": Aggressor(), "villain": make_bot("calling_station")})
 
 def hand(hero=(), villain=(), hero_on_button=True, seed=1, hand_number=0):
     players = {"hero": ScriptedPlayer(hero), "villain": ScriptedPlayer(villain)}
@@ -124,16 +151,8 @@ def test_the_button_completing_the_small_blind_has_not_faced_a_bet_only_the_big_
     assert tally.counts("preflop.vpip") == (1, 0)
 
 
-class Aggressor(ScriptedPlayer):
-    """Bets or raises pot whenever it can, else calls."""
-
-    def decide(self, state):
-        names = [item.action for item in state.menu]
-        return "raise_pot" if "raise_pot" in names else "call"
-
-
 def test_over_a_40_hand_match_against_the_calling_station_the_tally_shows_it_folded_to_no_bets():
-    records = play_match(match_seeds(7, 20), {"hero": Aggressor(), "villain": make_bot("calling_station")})
+    records = station_match()
 
     tally = tally_of(*records)
 
@@ -217,7 +236,7 @@ def test_notes_within_the_word_budget_are_not_marked_truncated():
 
 def station_tally():
     """A tally where the calling station faced plenty of bets and never folded."""
-    return tally_of(*play_match(match_seeds(7, 20), {"hero": Aggressor(), "villain": make_bot("calling_station")}))
+    return tally_of(*station_match())
 
 
 def test_a_cited_count_that_does_not_match_the_tally_is_replaced_by_the_true_count_and_logged():
@@ -368,3 +387,120 @@ def test_the_notes_block_never_exceeds_its_character_cap_and_keeps_the_nudge_lin
 
 def test_with_no_notes_yet_the_notes_block_is_empty():
     assert render_notes_block(Notes()) == ""
+
+
+# ---------- MemoryState ----------
+
+
+def duplicate_pair(seed=1, first=0):
+    """Both deals of one seeded deck, seats swapped, hero on the button first."""
+    players = {"hero": ScriptedPlayer(), "villain": ScriptedPlayer()}
+    return play_duplicate(seed, players, first_button="hero", first_hand_number=first)
+
+
+def shows_any_card(text, cards):
+    return any(re.search(rf"\b{card}\b", text) for card in cards)
+
+
+def test_the_first_deal_of_a_duplicate_pair_stays_pending_and_leaks_nothing_into_memory():
+    first, _ = duplicate_pair()
+    assert first.showdown  # so it has showdown cards that could leak
+    memory = MemoryState("hero")
+
+    memory.observe(first)
+
+    assert memory.is_pending(first.hand_number)
+    assert memory.tally.hands == 0 and memory.tally.snapshot()["counts"] == {}
+    prompt = memory.rewrite_prompt()
+    assert not shows_any_card(prompt, first.board + first.hole_cards["villain"] + first.hole_cards["hero"])
+    assert memory.notes_block() == ""
+
+
+def test_once_the_second_deal_of_the_pair_is_observed_both_hands_are_committed():
+    first, second = duplicate_pair()
+    memory = MemoryState("hero")
+
+    memory.observe(first)
+    memory.observe(second)
+
+    assert not memory.is_pending(first.hand_number) and not memory.is_pending(second.hand_number)
+    assert memory.tally.hands == 2
+    prompt = memory.rewrite_prompt()
+    assert render_hand(first, "hero") in prompt and render_hand(second, "hero") in prompt
+
+
+def test_a_rewrite_is_due_each_time_the_committed_hands_pass_another_five_and_not_again_until_it_is_applied():
+    records = play_match(match_seeds(3, 10), {"hero": ScriptedPlayer(), "villain": ScriptedPlayer()})
+    memory = MemoryState("hero")
+    due_after = []
+
+    for record in records:
+        memory.observe(record)
+        if memory.due():
+            due_after.append(record.hand_number)
+            assert memory.due()  # stays due until the rewrite is applied
+            memory.apply_rewrite("")
+
+    # Pairs commit two hands at a time: 6 committed passes 5, 10 reaches 10, 16 passes 15, 20.
+    assert due_after == [5, 9, 15, 19]
+
+
+def test_a_new_memory_state_starts_empty():
+    memory = MemoryState("hero")
+
+    assert memory.tally.hands == 0
+    assert memory.notes == Notes()
+    assert not memory.due()
+    assert memory.notes_block() == ""
+
+
+# ---------- MemoryEvent logging ----------
+
+
+def station_memory():
+    """MemoryState after a 40-hand match where the calling station never folded."""
+    memory = MemoryState("hero")
+    for record in station_match():
+        memory.observe(record)
+    return memory
+
+
+def test_applying_a_rewrite_logs_old_raw_parsed_and_verified_notes_the_tally_and_the_flags_as_json():
+    memory = station_memory()
+    true_counts = memory.tally.counts("faced_bet.continue")
+    response = "Notes:\nnever folds to bets | key faced_bet.continue | for 3 | against 0 | TENTATIVE\nbluffs a lot | for 5 | against 1"
+
+    event = memory.apply_rewrite(response)
+
+    logged = json.loads(event.to_json())
+    assert logged["hand_number"] == 39 and logged["hands_seen"] == 40
+    assert logged["old_notes"] == []
+    assert logged["raw_response"] == response
+    assert [h["for_count"] for h in logged["parsed_notes"]] == [3, 5]
+    assert logged["verified_notes"][0] == {
+        "text": "never folds to bets", "for_count": true_counts[0], "against_count": true_counts[1],
+        "opportunity_key": "faced_bet.continue", "status": CONFIRMED,
+    }
+    assert logged["verified_notes"][1]["status"] == TENTATIVE
+    assert logged["tally"] == memory.tally.snapshot()
+    assert logged["flags"] == {
+        "count_mismatch": True, "unverifiable": True, "parse_failed": False, "truncated": False,
+        "junk_lines": True, "dropped_lines": False,
+    }
+    assert logged["count_mismatches"][0]["cited"] == [3, 0]
+    assert logged["unverifiable"] == ["bluffs a lot"]
+    assert logged["junk_lines"] == ["Notes:"]
+    assert memory.notes == Notes(tuple(Hypothesis(**h) for h in logged["verified_notes"]))
+    assert "never folds to bets | for" in memory.notes_block()
+
+
+def test_a_rewrite_that_does_not_parse_keeps_the_old_notes_unchanged_and_logs_parse_failed():
+    memory = station_memory()
+    memory.apply_rewrite("never folds to bets | key faced_bet.continue | for 1 | against 0")
+    kept = memory.notes
+
+    event = memory.apply_rewrite("I have no idea.")
+
+    assert memory.notes == kept
+    assert event.flags["parse_failed"] and not event.flags["count_mismatch"]
+    assert event.old_notes == event.verified_notes == [dataclasses.asdict(h) for h in kept.hypotheses]

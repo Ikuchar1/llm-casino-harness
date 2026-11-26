@@ -3,13 +3,15 @@
 The harness keeps the ground truth, an OpponentTally of the opponent's actions per
 opportunity, and the model writes the interpretation: Notes of at most 3 hypotheses,
 rewritten in full every 5 hands. The harness, not the model, checks each cited count
-against the tally and sets each hypothesis's status.
+against the tally and sets each hypothesis's status. MemoryState ties it together and
+only takes in hands from completed duplicate pairs.
 """
 
 import dataclasses
-from collections import Counter
-from dataclasses import dataclass
+import json
 import re
+from collections import Counter, deque
+from dataclasses import dataclass
 from typing import Any, Optional
 
 from poker.engine import CALL, CHECK, FOLD, STREETS, DecisionState, HandRecord
@@ -19,7 +21,7 @@ FACED_BET_OUTCOMES = ("fold", "call", "raise", "continue", "no_raise")
 CHECKED_TO_OUTCOMES = ("bet", "check")
 MAX_HYPOTHESES = 3
 WORD_BUDGET = 100  # words of hypothesis text across all notes; counts and status are extra
-SHOWN_HANDS = 5  # showdown cards listed in the tally text, most recent first
+SHOWN_HANDS = 5  # most recent showdowns whose cards the tally text lists
 
 
 @dataclass(frozen=True)
@@ -131,7 +133,9 @@ class OpponentTally:
         return {
             "hands": self.hands,
             "counts": {key: list(self.counts(key)) for key in sorted(self._opportunities)},
-            "showdowns": [dataclasses.asdict(shown) for shown in self.showdowns],
+            "showdowns": [
+                {"hand_number": s.hand_number, "cards": list(s.cards), "board": list(s.board)} for s in self.showdowns
+            ],
         }
 
 
@@ -405,3 +409,127 @@ def render_notes_block(notes: Notes) -> str:
         lines.append(line)
         room -= len(line) + 1
     return "\n".join([_NOTES_HEADER, *lines, _NUDGE])
+
+
+# ---------- Logging ----------
+
+
+@dataclass
+class MemoryEvent:
+    """One notes rewrite, logged in full so lock-in can be measured later.
+
+    Notes are lists of Hypothesis dicts. `flags` says which tolerances and corrections
+    fired; the lists after it say exactly what each one touched.
+    """
+
+    hand_number: Optional[int]  # the last committed hand before this rewrite
+    hands_seen: int  # committed hands in the tally
+    old_notes: list[dict[str, Any]]
+    raw_response: Optional[str]
+    parsed_notes: list[dict[str, Any]]  # as the parser read them (the old notes on parse_failed)
+    verified_notes: list[dict[str, Any]]  # true counts and harness-set status: the notes now in use
+    tally: dict[str, Any]  # OpponentTally.snapshot() at this rewrite
+    flags: dict[str, bool]  # count_mismatch, unverifiable, parse_failed, truncated, junk_lines, dropped_lines
+    count_mismatches: list[dict[str, Any]]
+    unverifiable: list[str]
+    junk_lines: list[str]
+    dropped_lines: list[str]
+
+    def to_dict(self) -> dict[str, Any]:
+        return dataclasses.asdict(self)
+
+    def to_json(self) -> str:
+        return json.dumps(self.to_dict())
+
+
+def _as_dicts(notes: Notes) -> list[dict[str, Any]]:
+    return [dataclasses.asdict(hypothesis) for hypothesis in notes.hypotheses]
+
+
+# ---------- MemoryState ----------
+
+REWRITE_EVERY = 5  # hands between rewrites
+RECENT_HANDS = 5  # raw hands shown in a rewrite prompt
+
+
+class MemoryState:
+    """One match's memory: the tally, the notes, and the hands they came from.
+
+    The caller makes the model call: when due(), send rewrite_prompt() and pass the reply
+    to apply_rewrite(). Make a new MemoryState per match, so every match starts empty.
+
+    Duplicate dealing deals each seed twice (decision 5), so a hand from the first deal
+    would show the model the board, and maybe its own cards, of the deal still to come.
+    observe() therefore holds the first deal of a pair as pending and commits both hands
+    to the tally and the recent hands only once the second deal (same seed) arrives.
+    """
+
+    def __init__(self, model_name: str):
+        self.model_name = model_name
+        self.tally = OpponentTally(model_name)
+        self.notes = Notes()
+        self.recent: deque[HandRecord] = deque(maxlen=RECENT_HANDS)
+        self._pending: dict[int, HandRecord] = {}  # seed -> first deal of its pair
+        self._rewritten_through = 0  # committed hands // REWRITE_EVERY at the last rewrite
+
+    def observe(self, record: HandRecord) -> None:
+        first = self._pending.pop(record.seed, None)
+        if first is None:
+            self._pending[record.seed] = record
+            return
+        for committed in (first, record):
+            self.tally.observe(committed)
+            self.recent.append(committed)
+
+    def is_pending(self, hand_number: int) -> bool:
+        """True while this hand is held back waiting for the second deal of its pair."""
+        return any(record.hand_number == hand_number for record in self._pending.values())
+
+    def due(self) -> bool:
+        """True once the committed hands pass another multiple of REWRITE_EVERY since the last rewrite.
+
+        Pairs commit two hands at a time, so with REWRITE_EVERY = 5 rewrites come after
+        6, 10, 16, 20, ... committed hands.
+        """
+        return self.tally.hands // REWRITE_EVERY > self._rewritten_through
+
+    def apply_rewrite(self, response: Optional[str]) -> MemoryEvent:
+        """Parse the model's rewrite, verify it against the tally, make it the notes, and log it.
+
+        If nothing parses, the old notes stay exactly as they were (not re-verified).
+        """
+        old = self.notes
+        parsed = parse_rewrite(response, old)
+        if parsed.parse_failed:
+            checked = VerifyResult(old, [], [])
+        else:
+            checked = verify(parsed.notes, self.tally)
+        self.notes = checked.notes
+        self._rewritten_through = self.tally.hands // REWRITE_EVERY
+        return MemoryEvent(
+            hand_number=self.recent[-1].hand_number if self.recent else None,
+            hands_seen=self.tally.hands,
+            old_notes=_as_dicts(old),
+            raw_response=response,
+            parsed_notes=_as_dicts(parsed.notes),
+            verified_notes=_as_dicts(checked.notes),
+            tally=self.tally.snapshot(),
+            flags={
+                "count_mismatch": bool(checked.count_mismatches),
+                "unverifiable": bool(checked.unverifiable),
+                "parse_failed": parsed.parse_failed,
+                "truncated": parsed.truncated,
+                "junk_lines": bool(parsed.junk_lines),
+                "dropped_lines": bool(parsed.dropped),
+            },
+            count_mismatches=checked.count_mismatches,
+            unverifiable=checked.unverifiable,
+            junk_lines=parsed.junk_lines,
+            dropped_lines=parsed.dropped,
+        )
+
+    def rewrite_prompt(self) -> str:
+        return build_rewrite_prompt(self.notes, self.tally, list(self.recent), self.model_name)
+
+    def notes_block(self) -> str:
+        return render_notes_block(self.notes)
