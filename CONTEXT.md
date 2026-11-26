@@ -26,6 +26,10 @@ _Avoid_: Calculation tool, calculator, odds tool, function calling
 The harness component that gives the model a short list of plain-language strategy principles that cover most, but not all, basic strategy cells. It is never the full chart.
 _Avoid_: Strategy chart, cheat sheet, hints
 
+**Memory**:
+The harness component that keeps the model's own written notes about the opponent, rewritten every few hands from a running tally of the opponent's actions. It is used in poker only.
+_Avoid_: History, opponent stats, notes
+
 **Self-evaluation**:
 The harness component in which, after each first answer, the model is asked with a generic, content-free prompt to re-check that answer before committing. The final answer is the one graded.
 _Avoid_: Reflexion, reflection, retry
@@ -51,6 +55,12 @@ _Avoid_: Entire harness config, best config
 **Visitor**:
 A person playing the demo at the showcase or a presentation.
 _Avoid_: User, participant, subject
+
+### Poker
+
+**Leak bot**:
+A scripted poker opponent with one obvious, fixed habit (for example, never folding) that a player can learn and exploit.
+_Avoid_: Dummy bot, weak bot, NPC
 
 ### Blackjack
 
