@@ -34,6 +34,12 @@ STREETS = ("preflop", "flop", "turn", "river")
 FOLD = "fold"
 CHECK = "check"
 CALL = "call"
+RAISE_HALF_POT = "raise_half_pot"
+RAISE_POT = "raise_pot"
+ALL_IN = "all_in"
+
+# Pot-size raises: raise-to = the bet being faced + fraction x (pot after calling).
+_POT_FRACTIONS = ((RAISE_HALF_POT, 0.5), (RAISE_POT, 1.0))
 
 _AUTOMATIONS = (
     Automation.ANTE_POSTING,
@@ -70,10 +76,32 @@ class DecisionState:
     menu: tuple[MenuItem, ...]
 
 
+@dataclass(frozen=True)
+class Clamp:
+    """A pot-size raise whose formula amount was outside PokerKit's min/max raise-to."""
+
+    action: str
+    requested: int  # the pot-size formula's raise-to
+    actual: int  # after clamping; dropped from the menu if another item has this amount
+
+
 class Player(Protocol):
     """Anything that can choose an action. Return the action name of one state.menu item."""
 
     def decide(self, state: DecisionState) -> Optional[str]: ...
+
+
+@dataclass
+class DecisionRecord:
+    """One decision: what the player saw and what the engine did with its choice."""
+
+    player: str
+    state: DecisionState  # includes the menu offered
+    choice: Optional[str]  # exactly what the player returned
+    action: str  # the menu action applied: the choice, or the fallback
+    amount: int  # chips to call, or the raise-to total; 0 for fold and check
+    fallback: bool  # the choice was not on the menu, so check (or fold) was applied
+    clamps: list[Clamp]
 
 
 @dataclass
@@ -86,6 +114,7 @@ class HandRecord:
     board: list[str]
     showdown: bool
     chip_delta: dict[str, int]  # player name -> chips won (negative = lost); sums to 0
+    decisions: list[DecisionRecord]
 
 
 def play_hand(seed: int, players: dict[str, Player], button: str, deck: Optional[list[str]] = None) -> HandRecord:
@@ -105,16 +134,28 @@ def play_hand(seed: int, players: dict[str, Player], button: str, deck: Optional
     state.deal_hole("".join(hole[BIG_BLIND_SEAT]))
     state.deal_hole("".join(hole[BUTTON]))
     board: list[str] = []
+    decisions: list[DecisionRecord] = []
 
     while state.status:
         if state.actor_index is not None:
             seat = BUTTON if state.actor_index == _POKERKIT_INDEX[BUTTON] else BIG_BLIND_SEAT
-            snapshot = _decision_state(state, seat, hole[seat], board)
+            menu, clamps = _menu(state)
+            snapshot = _decision_state(state, seat, hole[seat], board, menu)
             choice = players[seat_names[seat]].decide(snapshot)
-            if choice == FOLD:
+            item = next((item for item in menu if item.action == choice), None)
+            fallback = item is None
+            if fallback:
+                item = _fallback_item(menu)
+            decisions.append(DecisionRecord(
+                player=seat_names[seat], state=snapshot, choice=choice, action=item.action,
+                amount=item.amount, fallback=fallback, clamps=clamps,
+            ))
+            if item.action == FOLD:
                 state.fold()
-            else:
+            elif item.action in (CHECK, CALL):
                 state.check_or_call()
+            else:
+                state.complete_bet_or_raise_to(item.amount)
         elif state.can_burn_card():
             state.burn_card(next(cards))
         elif state.can_deal_board():
@@ -131,15 +172,13 @@ def play_hand(seed: int, players: dict[str, Player], button: str, deck: Optional
         board=board,
         showdown=showdown,
         chip_delta={seat_names[seat]: int(state.payoffs[_POKERKIT_INDEX[seat]]) for seat in SEATS},
+        decisions=decisions,
     )
 
 
-def _decision_state(state, seat: str, hole_cards: list[str], board: list[str]) -> DecisionState:
+def _decision_state(state, seat: str, hole_cards: list[str], board: list[str], menu: list[MenuItem]) -> DecisionState:
     me = _POKERKIT_INDEX[seat]
     to_call = state.checking_or_calling_amount
-    menu = [MenuItem(CALL, to_call) if to_call else MenuItem(CHECK)]
-    if state.can_fold():
-        menu.insert(0, MenuItem(FOLD))
     return DecisionState(
         seat=seat,
         hole_cards=tuple(hole_cards),
@@ -152,3 +191,40 @@ def _decision_state(state, seat: str, hole_cards: list[str], board: list[str]) -
         is_button=seat == BUTTON,
         menu=tuple(menu),
     )
+
+
+def _fallback_item(menu: list[MenuItem]) -> MenuItem:
+    """Check if check is on the menu, else fold (docs/poker-plan.md, decision 12)."""
+    by_action = {item.action: item for item in menu}
+    return by_action.get(CHECK) or by_action[FOLD]
+
+
+def _menu(state) -> tuple[list[MenuItem], list[Clamp]]:
+    """The legal menu right now: fold, check or call, the pot-size raises, all-in.
+
+    Raise sizes are clamped to PokerKit's min/max raise-to; a raise that clamps to an
+    amount already on the menu (often the all-in) is dropped. Every clamp is returned.
+    """
+    to_call = state.checking_or_calling_amount
+    menu = []
+    clamps: list[Clamp] = []
+    if state.can_fold():
+        menu.append(MenuItem(FOLD))
+    menu.append(MenuItem(CALL, to_call) if to_call else MenuItem(CHECK))
+    if not state.can_complete_bet_or_raise_to():
+        return menu, clamps
+
+    low = state.min_completion_betting_or_raising_to_amount
+    high = state.max_completion_betting_or_raising_to_amount
+    facing = max(state.bets)
+    taken = {high}
+    for action, fraction in _POT_FRACTIONS:
+        requested = facing + int(fraction * (state.total_pot_amount + to_call))
+        actual = min(max(requested, low), high)
+        if actual != requested:
+            clamps.append(Clamp(action, requested, actual))
+        if actual not in taken:
+            menu.append(MenuItem(action, actual))
+            taken.add(actual)
+    menu.append(MenuItem(ALL_IN, high))
+    return menu, clamps

@@ -83,3 +83,85 @@ def test_the_same_seed_and_the_same_actions_give_the_same_hole_cards_board_and_o
     assert first.board == second.board
     assert first.chip_delta == second.chip_delta
     assert (other.hole_cards, other.board) != (first.hole_cards, first.board)
+
+
+# ---------- Action menu ----------
+
+
+def menu_of(state):
+    """The menu as (action, amount) pairs; amounts are chips to call or the raise-to total."""
+    return [(item.action, item.amount) for item in state.menu]
+
+
+def first_states(button_choices=(), big_blind_choices=(), seed=1):
+    button, big_blind = ScriptedPlayer(button_choices), ScriptedPlayer(big_blind_choices)
+    record = play_hand(seed=seed, players=heads_up(button, big_blind), button="hero")
+    return button.states, big_blind.states, record
+
+
+def test_the_button_facing_the_big_blind_preflop_gets_fold_call_both_pot_raises_and_all_in():
+    button_states, _, _ = first_states()
+
+    assert menu_of(button_states[0]) == [
+        ("fold", 0), ("call", 1), ("raise_half_pot", 4), ("raise_pot", 6), ("all_in", 200),
+    ]
+
+
+def test_the_big_blind_after_a_limp_can_check_or_raise_but_is_not_offered_fold():
+    _, big_blind_states, _ = first_states(button_choices=["call"])
+
+    assert menu_of(big_blind_states[0]) == [("check", 0), ("raise_half_pot", 4), ("raise_pot", 6), ("all_in", 200)]
+
+
+def test_a_player_facing_a_bet_is_offered_call_and_fold_but_never_check():
+    _, big_blind_states, _ = first_states(button_choices=["raise_pot"])
+
+    actions = [action for action, _ in menu_of(big_blind_states[0])]
+    assert "check" not in actions
+    assert menu_of(big_blind_states[0])[:2] == [("fold", 0), ("call", 4)]
+
+
+def test_a_player_facing_an_all_in_can_only_fold_or_call_and_is_offered_no_raise():
+    _, big_blind_states, _ = first_states(button_choices=["all_in"])
+
+    assert menu_of(big_blind_states[0]) == [("fold", 0), ("call", 198)]
+
+
+def test_pot_raises_that_would_go_past_the_stack_clamp_to_all_in_are_dropped_and_recorded():
+    # Pot raises: button to 6, big blind to 18, button to 54, big blind to 162.
+    _, _, record = first_states(button_choices=["raise_pot", "raise_pot", "fold"], big_blind_choices=["raise_pot", "raise_pot"])
+
+    facing_162 = record.decisions[4]
+    assert menu_of(facing_162.state) == [("fold", 0), ("call", 108), ("all_in", 200)]
+    assert [(c.action, c.requested, c.actual) for c in facing_162.clamps] == [
+        ("raise_half_pot", 324, 200), ("raise_pot", 486, 200),
+    ]
+    assert all(not decision.clamps for decision in record.decisions[:4])
+
+
+# ---------- Fallback ----------
+
+
+def test_a_choice_not_on_the_menu_checks_when_check_is_legal_and_records_the_fallback():
+    _, big_blind_states, record = first_states(button_choices=["call"], big_blind_choices=["shove it all"])
+
+    limp_answer = record.decisions[1]
+    assert limp_answer.choice == "shove it all"
+    assert limp_answer.action == "check"
+    assert limp_answer.fallback is True
+    assert record.decisions[0].fallback is False
+
+
+def test_a_choice_not_on_the_menu_folds_when_facing_a_bet():
+    _, _, record = first_states(button_choices=["check"])
+
+    assert record.decisions[0].choice == "check"
+    assert record.decisions[0].action == "fold"
+    assert record.decisions[0].fallback is True
+    assert record.showdown is False
+
+
+def test_no_answer_at_all_is_also_a_fallback():
+    _, _, record = first_states(button_choices=[None])
+
+    assert (record.decisions[0].choice, record.decisions[0].action, record.decisions[0].fallback) == (None, "fold", True)
