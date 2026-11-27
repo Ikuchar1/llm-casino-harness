@@ -141,6 +141,19 @@ def test_the_decision_state_says_which_off_menu_names_the_engine_applies_and_as_
     ]
 
 
+def test_the_decision_state_gives_the_street_total_the_player_faces():
+    # Preflop the blind is the bet faced; after the button's raise to 6 it is 6; after a limp
+    # the big blind still faces its own 2; on the flop with no bet it is 0.
+    opening, _, _ = first_states()
+    _, facing_raise, _ = first_states(button_choices=["raise_pot"])
+    _, after_limp, _ = first_states(button_choices=["call", "check"], big_blind_choices=["check", "check"])
+
+    assert opening[0].street_total_faced == 2
+    assert facing_raise[0].street_total_faced == 6
+    assert after_limp[0].street_total_faced == 2
+    assert (after_limp[1].street, after_limp[1].street_total_faced) == ("flop", 0)
+
+
 def test_pot_raises_that_would_go_past_the_stack_clamp_to_all_in_are_dropped_and_recorded():
     # Pot raises: button to 6, big blind to 18, button to 54, big blind to 162.
     _, _, record = first_states(button_choices=["raise_pot", "raise_pot", "fold"], big_blind_choices=["raise_pot", "raise_pot"])

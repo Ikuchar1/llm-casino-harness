@@ -94,6 +94,16 @@ class DecisionState:
     # Not logged (the engine rebuilds it each decision), so not part of equality either.
     dropped: tuple[tuple[str, str], ...] = field(default=(), compare=False)
 
+    @property
+    def street_total_faced(self) -> int:
+        """The street total the player must match: the last raise-to this street, else the
+        big blind preflop, else 0 (= the player's street bet + to_call)."""
+        raises = [action.amount for action in self.history
+                  if action.street == self.street and action.action not in (FOLD, CHECK, CALL)]
+        if raises:
+            return raises[-1]
+        return BIG_BLIND if self.street == STREETS[0] else 0
+
     def applied_action(self, choice: Optional[str]) -> Optional[str]:
         """The menu action the engine applies for this choice, or None when it would fall back."""
         if any(item.action == choice for item in self.menu):

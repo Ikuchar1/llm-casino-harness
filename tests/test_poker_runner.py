@@ -184,7 +184,7 @@ def test_resuming_a_run_started_under_the_v2_parser_is_refused_because_bare_rais
     metadata = json.loads((out / "metadata.json").read_text())
     (out / "metadata.json").write_text(json.dumps({**metadata, "parser_version": "poker-parser-v2"}))
 
-    with pytest.raises(ValueError, match="cannot resume.*parser_version='poker-parser-v2', not 'poker-parser-v3'"):
+    with pytest.raises(ValueError, match="cannot resume.*parser_version='poker-parser-v2', not 'poker-parser-v4'"):
         run(out, n_pairs=2)
 
 

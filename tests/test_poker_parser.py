@@ -64,6 +64,22 @@ def test_a_raise_to_an_amount_off_the_menu_is_clamped_to_the_nearest_legal_raise
     assert (near_pot.action, near_pot.status, near_pot.mapping) == ("raise_pot", "clamped", "raise to 28 -> raise_pot")
 
 
+def test_a_raise_to_no_more_than_the_bet_faced_is_clamped_to_the_call_or_the_check():
+    # The big blind facing a raise to 6 (call 4); and with no bet, a "raise" to the street total of 0.
+    facing_six = (MenuItem("fold"), MenuItem("call", 4), MenuItem("raise_half_pot", 12),
+                  MenuItem("raise_pot", 18), MenuItem("all_in", 200))
+    to_six = parse_choice("ACTION: raise_to_6", facing_six, faced=6)
+    below = parse_choice("ACTION: raise 5", facing_six, faced=6)
+    no_bet = parse_choice("ACTION: raise to 0", NO_BET, faced=0)
+
+    assert (to_six.action, to_six.status, to_six.named, to_six.mapping) == (
+        "call", "clamped", "call", "raise_to_6 -> call (at or below the bet faced)")
+    assert (below.action, below.status) == ("call", "clamped")
+    assert (no_bet.action, no_bet.status, no_bet.mapping) == (
+        "check", "clamped", "raise to 0 -> check (at or below the bet faced)")
+    assert parse_choice("ACTION: raise_to_7", facing_six, faced=6).action == "raise_half_pot"
+
+
 def test_a_bare_raise_is_clamped_to_the_smallest_legal_raise():
     for reply in ("ACTION: raise", '{"action": "Raise"}', "ACTION: raise 3x"):
         result = parse_choice(reply, FACING_A_BET)

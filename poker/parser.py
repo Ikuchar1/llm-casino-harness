@@ -17,6 +17,10 @@ the end of the menu is off-menu. Synonyms are mapped only onto an item that is
 on the menu (SYNONYM_TARGETS), and the mapping is recorded. A raise the menu doesn't
 name ("raise", "raise_to_178", "raise to 178") is "clamped" to the nearest legal raise
 item, or, with no raise legal, to the call the engine applies for an off-menu pot raise.
+A sized raise ("raise to N", and "raise N", which is read the same way, as a raise-to
+total) at or below the street total the player faces (parse_choice's `faced`:
+DecisionState.street_total_faced) is no raise at all: it is "clamped" to the call, or
+to the check when there is nothing to call.
 """
 
 import json
@@ -31,7 +35,8 @@ from poker.engine import MenuItem
 #     cut-off replies with no ACTION line = truncated_no_action.
 # v3: a bare or sized raise ("raise", "raise_to_178") is clamped to a legal raise (or
 #     the call), no longer unparseable.
-PARSER_VERSION = "poker-parser-v3"
+# v4: a raise to N at or below the street total faced is clamped to the call (or check).
+PARSER_VERSION = "poker-parser-v4"
 
 OK = "ok"
 TRUNCATED = "truncated_no_action"
@@ -104,8 +109,12 @@ class ParseResult:
     mapping: Optional[str] = None
 
 
-def parse_choice(reply: str, menu: tuple[MenuItem, ...], done_reason: Optional[str] = None) -> ParseResult:
+def parse_choice(reply: str, menu: tuple[MenuItem, ...], done_reason: Optional[str] = None,
+                 faced: Optional[int] = None) -> ParseResult:
     """Parse a reply against the menu it answered.
+
+    faced is the street total the player faces (DecisionState.street_total_faced); a
+    sized raise at or below it is the call (or check). None skips that rule.
 
     done_reason is Ollama's reason the reply ended ("stop" or "length"). A reply cut off
     by the token limit with no ACTION line is "truncated_no_action": whatever action
@@ -121,12 +130,12 @@ def parse_choice(reply: str, menu: tuple[MenuItem, ...], done_reason: Optional[s
         except json.JSONDecodeError:
             continue
         if isinstance(value, dict) and "action" in value:
-            return _resolve(str(value["action"]), menu, "json")
+            return _resolve(str(value["action"]), menu, "json", faced)
     if lines:
-        return _resolve(lines[-1], menu, "action_line")
+        return _resolve(lines[-1], menu, "action_line", faced)
     loose = _last_loose_answer(cleaned.lower())
     if loose is not None:
-        return _resolve(loose, menu, "loose")
+        return _resolve(loose, menu, "loose", faced)
     return ParseResult(None, "unparseable")
 
 
@@ -155,14 +164,14 @@ def _phrase(words: list[str]) -> Optional[str]:
     return None
 
 
-def _resolve(answer: str, menu: tuple[MenuItem, ...], method: str) -> ParseResult:
+def _resolve(answer: str, menu: tuple[MenuItem, ...], method: str, faced: Optional[int] = None) -> ParseResult:
     actions = [item.action for item in menu]
     words = _words(answer)
     if words and words[0].isdigit():
         return _resolve_number(answer, actions, method)
     named = _phrase(words)
     if named is None and words[:1] == ["raise"]:
-        return _resolve_raise(answer, menu, method)
+        return _resolve_raise(answer, menu, method, faced)
     if named is None:
         return ParseResult(None, "unparseable", method)
     if named in actions:
@@ -173,18 +182,24 @@ def _resolve(answer: str, menu: tuple[MenuItem, ...], method: str) -> ParseResul
     return ParseResult(None, "off_menu", method, named)
 
 
-def _resolve_raise(answer: str, menu: tuple[MenuItem, ...], method: str) -> ParseResult:
+def _resolve_raise(answer: str, menu: tuple[MenuItem, ...], method: str, faced: Optional[int]) -> ParseResult:
     """A raise the menu doesn't name ("raise", "raise_to_178"): clamped to a legal raise.
 
+    An amount at or below `faced` (the street total faced) puts in no more than a call:
+    it is the call, or the check when there is nothing to call.
     With an amount, the raise item nearest to it (the smaller on a tie); without one,
     the smallest raise item. With no raise on the menu (a player is all-in), it names
     raise_half_pot off the menu, which the engine applies as the clamped call
     (DecisionState.dropped), or falls back on when there is no call either.
     """
+    amount = _RAISE_AMOUNT.match(answer.strip().lower())
+    if amount is not None and faced is not None and int(amount.group(1)) <= faced:
+        actions = [item.action for item in menu]
+        target = "call" if "call" in actions else "check"
+        return ParseResult(target, CLAMPED, method, target, f"{answer.strip()} -> {target} (at or below the bet faced)")
     raises = [item for item in menu if item.action in RAISES]
     if not raises:
         return ParseResult(None, CLAMPED, method, RAISES[0], f"{answer.strip()} -> {RAISES[0]}")
-    amount = _RAISE_AMOUNT.match(answer.strip().lower())
     if amount is not None:
         target = min(raises, key=lambda item: abs(item.amount - int(amount.group(1))))
     else:

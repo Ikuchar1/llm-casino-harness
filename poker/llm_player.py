@@ -101,7 +101,7 @@ class PokerLLMPlayer:
         user_prompt = build_user_prompt(state, notes=self.notes, tools=tool_lines)
         # Errors from the client (e.g. Ollama down) propagate and stop the run.
         reply = self.client.chat(self.system_prompt, user_prompt)
-        result = parse_choice(reply.content, state.menu, reply.done_reason)
+        result = parse_choice(reply.content, state.menu, reply.done_reason, state.street_total_faced)
         choice = result.action if result.action is not None else result.named
         self_check, warnings = None, None
         total_latency = reply.latency_s
@@ -144,7 +144,7 @@ class PokerLLMPlayer:
             {"role": "user", "content": prompt},
         ]
         reply = self.client.chat_messages(messages)
-        second = parse_choice(reply.content, state.menu, reply.done_reason)
+        second = parse_choice(reply.content, state.menu, reply.done_reason, state.street_total_faced)
         final = final_choice(first_choice, _usable(second, state))
         log = {
             "first_action": first_usable,

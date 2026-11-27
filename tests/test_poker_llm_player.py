@@ -199,6 +199,18 @@ def test_total_latency_is_the_first_call_plus_the_re_check_in_the_tools_setup_an
     assert (single.latency_s, single.total_latency_s) == (0.5, 0.5)
 
 
+def test_a_raise_to_the_bet_faced_is_played_as_the_call_on_the_first_answer_and_the_re_check():
+    plain = PokerLLMPlayer(FakeChatClient(["ACTION: raise_to_4"]), SETUPS["plain"])
+    tools = PokerLLMPlayer(FakeChatClient(["ACTION: fold", "ACTION: raise to 4"]), SETUPS["tools"])
+
+    assert plain.decide(preflop_state()) == "call"  # the big blind facing the open to 4
+    assert tools.decide(preflop_state()) == "call"
+    detail, = plain.take_hand_details()
+    assert (detail.parse_status, detail.mapping) == ("clamped", "raise_to_4 -> call (at or below the bet faced)")
+    checked, = tools.take_hand_details()
+    assert (checked.self_check["second_action"], checked.self_check["second_parse_status"]) == ("call", "clamped")
+
+
 def test_an_unusable_re_check_keeps_the_first_answer_and_an_unusable_first_answer_gets_the_invalid_re_check():
     from poker.self_check import RECHECK_PROMPT_INVALID
 
