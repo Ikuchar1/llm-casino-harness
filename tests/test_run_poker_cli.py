@@ -184,6 +184,12 @@ def test_a_memory_run_against_the_calling_station_rewrites_every_five_committed_
         assert shown and max(shown) == event["hand_number"] and event["hand_number"] % 2 == 1
     rewrite_calls = [user for system, user in MemoryFakeOllama.calls if "Rewrite your notes" in user]
     assert rewrite_calls == [event["rewrite_prompt"] for event in events]
+    # The model's read text is logged only: no prompt ever shows it, the decision prompts show the harness sentence.
+    assert all(event["verified_notes"][0]["text"] == "always checks when checked to" for event in events)
+    assert not any("always checks when checked to" in user for _, user in MemoryFakeOllama.calls)
+    for row in model_rows:
+        if row["notes_version"] is not None:
+            assert f"- {events[row['notes_version']]['verified_notes'][0]['shown_text']}\n" in row["prompt"]
 
 
 def test_an_uninstalled_model_exits_1(tmp_path, monkeypatch):

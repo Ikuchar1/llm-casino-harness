@@ -705,7 +705,11 @@ class MemoryState:
 #     previous notes show each read with the tally's current counts.
 # v4: a read citing a key the tally text doesn't list is dropped (unlisted_key); 0/0 keys
 #     aren't listed, nor faced_bet.call unless calling was the most common answer to a bet.
-MEMORY_VERSION = "memory-v4"
+# v5: the harness writes every notes line the model sees: the decision prompt shows each read's
+#     evidence sentence and status, the rewrite prompt's previous notes show the evidence, key,
+#     current counts and status; the model's text is logged only. A read citing a key an
+#     earlier read cites is dropped (duplicate_key).
+MEMORY_VERSION = "memory-v5"
 
 
 def memory_settings() -> dict[str, Any]:

@@ -317,11 +317,12 @@ def test_resuming_a_memory_run_started_under_another_memory_version_is_refused_b
     out = tmp_path / "run"
     memory_run(out, n_pairs=3)
     metadata = json.loads((out / "metadata.json").read_text())
-    metadata["memory"]["memory_version"] = "memory-v1"
+    metadata["memory"]["memory_version"] = "memory-v4"  # notes with the model's text in the decision prompt
     (out / "metadata.json").write_text(json.dumps(metadata))
     before = [(out / name).read_text() for name in ("hands.jsonl", "decisions.jsonl", "memory.jsonl")]
 
-    with pytest.raises(ValueError, match=f"cannot resume.*memory_version='memory-v1', not '{MEMORY_VERSION}'"):
+    assert MEMORY_VERSION == "memory-v5"
+    with pytest.raises(ValueError, match="cannot resume.*memory_version='memory-v4', not 'memory-v5'"):
         memory_run(out, n_pairs=6)
     assert [(out / name).read_text() for name in ("hands.jsonl", "decisions.jsonl", "memory.jsonl")] == before
     assert len(json.loads((out / "metadata.json").read_text())["sessions"]) == 1

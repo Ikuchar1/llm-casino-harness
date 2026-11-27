@@ -553,8 +553,8 @@ def test_a_reply_that_copies_a_tally_line_from_the_rewrite_prompt_verbatim_verif
     assert memory.notes.hypotheses[0].status == CONFIRMED
 
 
-def test_the_memory_version_is_memory_v4_since_reads_citing_an_unlisted_key_are_dropped():
-    assert MEMORY_VERSION == "memory-v4"
+def test_the_memory_version_is_memory_v5_since_the_harness_writes_every_notes_line_the_model_sees():
+    assert MEMORY_VERSION == "memory-v5"
 
 
 def test_the_first_rewrite_prompt_says_there_are_no_previous_notes():
