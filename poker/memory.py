@@ -429,10 +429,11 @@ def build_rewrite_prompt(
 ) -> str:
     """The every-5-hands prompt: rewrite the notes in full from the tally and the last hands.
 
-    The previous reads are shown with the tally's current counts for their keys (and the
-    status those give), never the counts they were written with.
+    The previous reads are shown harness-written (previous_line): the evidence sentence for
+    each key, then the key, the tally's current counts and the status those give. Never the
+    model's own text, nor the counts the read was written with.
     """
-    old = "\n".join(h.cited_line() for h in refresh(previous, tally).notes.hypotheses) or "(none yet)"
+    old = "\n".join(previous_line(h) for h in refresh(previous, tally).notes.hypotheses) or "(none yet)"
     hands = "\n".join(render_hand(record, model_name) for record in recent_hands) or "(none)"
     return f"""You are playing heads-up no-limit Hold'em and keep short notes about your opponent's habits.
 Rewrite your notes in full from the evidence below. Do not just add to the old notes: keep a line only if the counts still support it.
@@ -498,6 +499,13 @@ def shown_line(hypothesis: Hypothesis) -> str:
     """
     counts = evidence(hypothesis.opportunity_key, hypothesis.for_count, hypothesis.against_count)
     return f"{counts} — {hypothesis.status}"
+
+
+def previous_line(hypothesis: Hypothesis) -> str:
+    """A kept read as the next rewrite prompt shows it: the harness's evidence sentence in place of
+    the model's text, then `key K | for N | against M | STATUS`, so an echoed line still parses."""
+    counts = evidence(hypothesis.opportunity_key, hypothesis.for_count, hypothesis.against_count)
+    return dataclasses.replace(hypothesis, text=counts).cited_line()
 
 
 # Fixed budget for the whole block in the prompt (poker.prompt's header included), so

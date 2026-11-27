@@ -458,7 +458,8 @@ def test_the_rewrite_prompt_shows_the_labelled_old_notes_the_tally_the_last_hand
     prompt = build_rewrite_prompt(previous, tally, records[-5:], "hero")
 
     assert "previous notes; revise or discard based on the counts below" in prompt.lower()
-    assert "plays few hands | key preflop.no_vpip | for " in prompt  # with the current counts (tested below)
+    assert "hands | key preflop.no_vpip | for " in prompt  # harness-written, current counts (tested below)
+    assert "plays few hands" not in prompt
     assert tally.render() in prompt
     for record in records[-5:]:
         assert render_hand(record, "hero") in prompt
@@ -500,9 +501,25 @@ def test_the_previous_notes_in_the_next_rewrite_prompt_carry_the_current_counts_
     previous = memory.rewrite_prompt().split("revise or discard based on the counts below:\n")[1].split("\n\n")[0]
 
     assert previous.splitlines() == [
-        f"never folds to bets | key faced_bet.continue | for {now[0]} | against {now[1]}"
-        f" | {status_for('faced_bet.continue', *now)}"
+        f"continued (called or raised) when facing a bet {now[0]} of {sum(now)} times"
+        f" | key faced_bet.continue | for {now[0]} | against {now[1]} | {status_for('faced_bet.continue', *now)}"
     ]
+
+
+def test_the_previous_notes_in_the_rewrite_prompt_are_harness_written_and_carry_no_model_text():
+    memory = rock_memory()
+    folds, others = memory.tally.counts("faced_bet.fold")
+    memory.apply_rewrite(f"never folds to any bet | key faced_bet.fold | for {folds} | against {others}")
+
+    prompt = memory.rewrite_prompt()
+
+    previous = prompt.split("revise or discard based on the counts below:\n")[1].split("\n\n")[0]
+    assert previous == (
+        f"folded when facing a bet {folds} of {folds + others} times | key faced_bet.fold | for {folds}"
+        f" | against {others} | {status_for('faced_bet.fold', folds, others)}"
+    )
+    assert "never folds to any bet" not in prompt
+    assert "keep a line only if the counts still support it" in prompt
 
 
 def test_a_reply_that_copies_a_tally_line_from_the_rewrite_prompt_verbatim_verifies_with_no_mismatch():
