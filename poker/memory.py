@@ -346,6 +346,7 @@ class VerifyResult:
     count_mismatches: list[dict[str, Any]]  # cited counts the harness replaced
     unverifiable: list[str]  # texts of hypotheses whose key is missing or not in OPPORTUNITY_KEYS (dropped)
     unlisted_keys: list[dict[str, Any]]  # text and key of hypotheses citing a key the tally text doesn't list (dropped)
+    duplicate_keys: list[dict[str, Any]]  # text and key of hypotheses citing a key an earlier kept read cites (dropped)
 
 
 def verify(notes: Notes, tally: OpponentTally) -> VerifyResult:
@@ -353,12 +354,15 @@ def verify(notes: Notes, tally: OpponentTally) -> VerifyResult:
 
     A mismatched count is replaced by the true one, and that read is TENTATIVE for this
     version whatever the true counts say. Reads with no known key are dropped, and so are
-    reads citing a known key the tally text doesn't list (the prompt allows only listed keys).
+    reads citing a known key the tally text doesn't list (the prompt allows only listed keys)
+    and reads citing a key an earlier kept read already cites (the harness would show the
+    same sentence twice).
     """
     checked: list[Hypothesis] = []
     mismatches: list[dict[str, Any]] = []
     unverifiable: list[str] = []
     unlisted: list[dict[str, Any]] = []
+    duplicates: list[dict[str, Any]] = []
     listed = tally.listed_keys()
     for hypothesis in notes.hypotheses:
         if hypothesis.opportunity_key not in OPPORTUNITY_KEYS:  # nothing to check it against: not shown
@@ -366,6 +370,9 @@ def verify(notes: Notes, tally: OpponentTally) -> VerifyResult:
             continue
         if hypothesis.opportunity_key not in listed:
             unlisted.append({"text": hypothesis.text, "opportunity_key": hypothesis.opportunity_key})
+            continue
+        if any(kept.opportunity_key == hypothesis.opportunity_key for kept in checked):
+            duplicates.append({"text": hypothesis.text, "opportunity_key": hypothesis.opportunity_key})
             continue
         true_for, true_against = tally.counts(hypothesis.opportunity_key)
         status = status_for(hypothesis.opportunity_key, true_for, true_against)
@@ -378,7 +385,7 @@ def verify(notes: Notes, tally: OpponentTally) -> VerifyResult:
         checked.append(dataclasses.replace(
             hypothesis, for_count=true_for, against_count=true_against, status=status,
         ))
-    return VerifyResult(Notes(tuple(checked)), mismatches, unverifiable, unlisted)
+    return VerifyResult(Notes(tuple(checked)), mismatches, unverifiable, unlisted, duplicates)
 
 
 def refresh(notes: Notes, tally: OpponentTally) -> VerifyResult:
@@ -555,10 +562,12 @@ class MemoryEvent:
     # (logged only) beside `shown_text`, the harness sentence the decision prompt shows instead.
     verified_notes: list[dict[str, Any]]
     tally: dict[str, Any]  # OpponentTally.snapshot() at this rewrite
-    flags: dict[str, bool]  # count_mismatch, unverifiable, unlisted_key, parse_failed, truncated, junk_lines, dropped_lines
+    # count_mismatch, unverifiable, unlisted_key, duplicate_key, parse_failed, truncated, junk_lines, dropped_lines
+    flags: dict[str, bool]
     count_mismatches: list[dict[str, Any]]
     unverifiable: list[str]
     unlisted_keys: list[dict[str, Any]]
+    duplicate_keys: list[dict[str, Any]]
     junk_lines: list[str]
     dropped_lines: list[str]
 
@@ -651,6 +660,7 @@ class MemoryState:
                 "count_mismatch": bool(checked.count_mismatches),
                 "unverifiable": bool(checked.unverifiable),
                 "unlisted_key": bool(checked.unlisted_keys),
+                "duplicate_key": bool(checked.duplicate_keys),
                 "parse_failed": parsed.parse_failed,
                 "truncated": parsed.truncated,
                 "junk_lines": bool(parsed.junk_lines),
@@ -659,6 +669,7 @@ class MemoryState:
             count_mismatches=checked.count_mismatches,
             unverifiable=checked.unverifiable,
             unlisted_keys=checked.unlisted_keys,
+            duplicate_keys=checked.duplicate_keys,
             junk_lines=parsed.junk_lines,
             dropped_lines=parsed.dropped,
         )

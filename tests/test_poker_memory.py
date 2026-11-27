@@ -395,6 +395,22 @@ def test_a_read_citing_the_unlisted_minority_side_of_a_pair_is_dropped_and_logge
     assert event.unverifiable == []
 
 
+def test_when_two_reads_cite_the_same_key_the_first_is_kept_and_the_rest_are_logged_as_duplicate_key_drops():
+    memory = station_memory()
+    continues = memory.tally.counts("faced_bet.continue")
+    cite = f"key faced_bet.continue | for {continues[0]} | against {continues[1]}"
+
+    event = memory.apply_rewrite(f"never folds | {cite}\ncalls everything | {cite}\nfolds to most bets | {cite}")
+
+    assert [h.text for h in memory.notes.hypotheses] == ["never folds"]
+    assert event.duplicate_keys == [
+        {"text": "calls everything", "opportunity_key": "faced_bet.continue"},
+        {"text": "folds to most bets", "opportunity_key": "faced_bet.continue"},
+    ]
+    assert event.flags["duplicate_key"] and not event.flags["unlisted_key"] and not event.flags["count_mismatch"]
+    assert memory.notes_block().count("— CONFIRMED") == 1
+
+
 def test_a_facing_a_bet_or_no_bet_to_face_read_is_confirmed_from_the_leak_threshold_of_opportunities():
     assert LEAK_THRESHOLD == 8
     assert status_for("faced_bet.continue", 7, 0) == TENTATIVE
@@ -746,10 +762,10 @@ def test_applying_a_rewrite_logs_old_raw_parsed_and_verified_notes_the_tally_and
     assert logged["parsed_notes"][1]["text"] == "bluffs a lot"
     assert logged["tally"] == memory.tally.snapshot()
     assert logged["flags"] == {
-        "count_mismatch": True, "unverifiable": True, "unlisted_key": False, "parse_failed": False,
-        "truncated": False, "junk_lines": True, "dropped_lines": False,
+        "count_mismatch": True, "unverifiable": True, "unlisted_key": False, "duplicate_key": False,
+        "parse_failed": False, "truncated": False, "junk_lines": True, "dropped_lines": False,
     }
-    assert logged["unlisted_keys"] == []
+    assert logged["unlisted_keys"] == [] and logged["duplicate_keys"] == []
     assert logged["count_mismatches"][0]["cited"] == [3, 0]
     assert logged["unverifiable"] == ["bluffs a lot"]
     assert logged["junk_lines"] == ["Notes:"]
