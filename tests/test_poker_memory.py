@@ -533,7 +533,7 @@ def test_the_first_rewrite_prompt_says_there_are_no_previous_notes():
 # ---------- Decision-time notes block ----------
 
 
-def test_the_notes_block_shows_each_read_with_a_plain_english_evidence_line_for_its_key_and_the_nudge():
+def test_the_notes_block_shows_each_read_as_the_harness_evidence_sentence_for_its_key_and_status_and_the_nudge():
     notes = Notes((
         Hypothesis("never folds to bets", 96, 0, "faced_bet.continue", CONFIRMED),
         Hypothesis("plays very few hands", 6, 1, "preflop.no_vpip", TENTATIVE),
@@ -542,18 +542,12 @@ def test_the_notes_block_shows_each_read_with_a_plain_english_evidence_line_for_
 
     block = render_notes_block(notes)
 
-    assert (
-        '- "never folds to bets" — evidence: continued (called or raised) when facing a bet 96 of 96 times'
-        " — CONFIRMED"
-    ) in block.splitlines()
-    assert (
-        '- "plays very few hands" — evidence: did not put money in voluntarily preflop 6 of 7 hands'
-        " — TENTATIVE"
-    ) in block.splitlines()
-    assert (
-        '- "bets the flop when checked to" — evidence: bet with no bet to face on the flop 9 of 10 times'
-        " — CONFIRMED"
-    ) in block.splitlines()
+    assert block.splitlines()[:3] == [
+        "- continued (called or raised) when facing a bet 96 of 96 times — CONFIRMED",
+        "- did not put money in voluntarily preflop 6 of 7 hands — TENTATIVE",
+        "- bet with no bet to face on the flop 9 of 10 times — CONFIRMED",
+    ]
+    assert not any(h.text in block for h in notes.hypotheses)
     assert "| for" not in block
     assert "TENTATIVE reads should only nudge your play" in block
 
@@ -568,42 +562,58 @@ def test_never_folds_citing_faced_bet_continue_with_the_true_counts_is_confirmed
     assert f"facing a bet {true_for} of {true_for} times — CONFIRMED" in memory.notes_block()
 
 
-def test_a_read_whose_text_contradicts_its_key_shows_the_contradicting_evidence_against_the_station():
+def test_a_read_whose_text_contradicts_its_key_shows_only_the_evidence_against_the_station():
     # The review's exploit: "folds to every bet" citing the key the station's never-folding fills.
     memory = station_memory()
     true_for, true_against = memory.tally.counts("faced_bet.continue")
 
     memory.apply_rewrite(f"folds to every bet | key faced_bet.continue | for {true_for} | against {true_against}")
 
-    assert (
-        f'- "folds to every bet" — evidence: continued (called or raised) when facing a bet'
-        f" {true_for} of {true_for + true_against} times"
-    ) in memory.notes_block()
+    block = memory.notes_block()
+    assert f"- continued (called or raised) when facing a bet {true_for} of {true_for + true_against} times" in block
+    assert "folds to every bet" not in block
 
 
-def test_the_notes_block_never_exceeds_its_character_cap_and_keeps_the_nudge_line():
-    long_text = "x" * 400
-    notes = Notes(tuple(Hypothesis(long_text, 9, 0, "faced_bet.call", TENTATIVE) for _ in range(3)))
+def rock_memory():
+    """MemoryState after a 40-hand match where the rock folded to most bets."""
+    memory = MemoryState("hero")
+    for record in play_match(match_seeds(7, 20), {"hero": Aggressor(), "villain": make_bot("rock")}):
+        memory.observe(record)
+    return memory
 
+
+def test_a_read_whose_text_contradicts_its_key_reaches_the_decision_prompt_as_the_harness_sentence_only():
+    # qwen2.5:7b's smoke-run read: "never folds to bets" citing faced_bet.fold against a rock.
+    from poker.prompt import build_user_prompt
+    from tests.test_poker_prompt import flop_state
+
+    memory = rock_memory()
+    folds, others = memory.tally.counts("faced_bet.fold")
+    assert "faced_bet.fold" in memory.tally.listed_keys() and folds > others
+    memory.apply_rewrite(f"never folds to bets | key faced_bet.fold | for {folds} | against {others}")
+
+    prompt = build_user_prompt(flop_state(), notes=memory.notes_block())
+
+    status = status_for("faced_bet.fold", folds, others)
+    assert f"- folded when facing a bet {folds} of {folds + others} times — {status}" in prompt.splitlines()
+    assert "never folds" not in prompt
+    assert "TENTATIVE reads should only nudge your play" in prompt
+
+
+def test_however_long_the_model_text_the_notes_block_stays_under_its_cap_with_every_read_and_the_nudge():
     from poker.prompt import notes_block
 
-    block = render_notes_block(notes)
-
-    assert len(notes_block(block).rstrip("\n")) <= NOTES_BLOCK_CHAR_CAP
-    assert "TENTATIVE reads should only nudge your play" in block
-    assert block.count("— evidence: called when facing a bet 9 of 9 times — TENTATIVE") >= 1
-
-
-def test_three_reads_at_the_full_word_budget_with_the_longest_evidence_lines_fit_the_cap_uncut():
-    text = " ".join(["calls"] * (WORD_BUDGET // 3))  # 5 letters, about an average English word
+    long_text = " ".join(["calls"] * WORD_BUDGET)
     notes = Notes(tuple(
-        Hypothesis(text, 960, 40, key, TENTATIVE)
+        Hypothesis(long_text, 960, 40, key, TENTATIVE)
         for key in ("faced_bet.no_raise.preflop", "faced_bet.continue.river", "preflop.no_vpip")
     ))
 
     block = render_notes_block(notes)
 
-    assert block.count(f'"{text}"') == 3
+    assert len(notes_block(block).rstrip("\n")) <= NOTES_BLOCK_CHAR_CAP
+    assert block.count(" of 1000 ") == 3 and "calls calls" not in block
+    assert "TENTATIVE reads should only nudge your play" in block
 
 
 def test_the_notes_block_in_a_decision_prompt_has_exactly_one_header():
@@ -725,7 +735,7 @@ def test_applying_a_rewrite_logs_old_raw_parsed_and_verified_notes_the_tally_and
     assert logged["unverifiable"] == ["bluffs a lot"]
     assert logged["junk_lines"] == ["Notes:"]
     assert memory.notes == Notes(tuple(Hypothesis(**h) for h in logged["verified_notes"]))
-    assert '"never folds to bets" — evidence:' in memory.notes_block()
+    assert memory.notes_block().startswith("- continued (called or raised) when facing a bet")
 
 
 def test_a_rewrite_that_does_not_parse_keeps_the_old_reads_re_verified_against_the_current_tally():

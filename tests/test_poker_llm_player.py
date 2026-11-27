@@ -121,6 +121,25 @@ def test_the_plain_and_memory_setups_log_no_tools_and_send_the_same_prompt_as_be
         assert (detail.tools, detail.self_check, detail.flags) == (None, None, None)
 
 
+def test_the_plain_and_tools_setups_send_byte_for_byte_the_prompts_they_sent_under_memory_v4():
+    # Every call (system, user and the tools re-check turn) hashed at commit 4d1bba5, before the
+    # harness wrote the notes (memory-v5): changing the notes must never touch a no-memory prompt.
+    import hashlib
+    import json
+
+    pinned = {
+        ("plain", "preflop"): "1d1f485f1e9a65f78595f89eeef86ab06d6970a18d88b3a03003a1f2bc366b8d",
+        ("plain", "flop"): "e004d3fbbec9456a2d22c11f425017ddf1f8880f2d2a1ade3ba2a3a556e4a15b",
+        ("tools", "preflop"): "1acbc92b8d9eec0e99b7daa6c2aced9a6fe4f4d569cd54c8e493a287ad167749",
+        ("tools", "flop"): "3acd16867bc26096aaa4053e10083029a01682df2b3f6b2b080abbb63d781346",
+    }
+    for (setup, street), digest in pinned.items():
+        client = FakeChatClient(["ACTION: call", "ACTION: call"])
+        PokerLLMPlayer(client, SETUPS[setup]).decide(preflop_state() if street == "preflop" else flop_state())
+
+        assert hashlib.sha256(json.dumps(client.calls).encode()).hexdigest() == digest, (setup, street)
+
+
 def preflop_state():
     """The big blind with QJs facing the button's open to 4."""
     from poker.engine import Action, DecisionState, MenuItem

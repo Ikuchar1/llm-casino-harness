@@ -89,8 +89,10 @@ def test_a_call_that_uses_all_the_remaining_chips_says_so():
     assert menu == ["1. fold - give up the hand", "2. call - put in 74 more chips to match (all your chips)"]
 
 
-def test_the_prompt_version_is_poker_v4_since_the_all_in_call_line_changed():
-    assert PROMPT_VERSION == "poker-v4"
+def test_the_prompt_version_is_poker_v5_since_the_notes_header_says_the_harness_wrote_the_reads():
+    assert PROMPT_VERSION == "poker-v5"
+    assert NOTES_HEADER == "Your notes on this opponent from earlier hands (each read is counted by the harness from what you saw):"
+    assert "quoted" not in NOTES_HEADER
 
 
 def test_this_hands_actions_are_told_as_you_and_opponent_by_street():

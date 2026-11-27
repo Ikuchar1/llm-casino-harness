@@ -165,14 +165,14 @@ def test_resuming_with_a_different_model_bot_seed_or_setup_is_refused_before_any
     assert len(json.loads((out / "metadata.json").read_text())["sessions"]) == 1
 
 
-def test_resuming_a_run_started_under_the_poker_v2_prompt_is_refused_because_of_the_prompt_version(tmp_path):
+def test_resuming_a_run_started_under_the_poker_v4_prompt_is_refused_because_of_the_prompt_version(tmp_path):
     out = tmp_path / "run"
     run(out, n_pairs=1)
     metadata = json.loads((out / "metadata.json").read_text())
-    (out / "metadata.json").write_text(json.dumps({**metadata, "prompt_version": "poker-v2"}))
+    (out / "metadata.json").write_text(json.dumps({**metadata, "prompt_version": "poker-v4"}))
     before = (out / "hands.jsonl").read_text()
 
-    with pytest.raises(ValueError, match="cannot resume.*prompt_version='poker-v2', not 'poker-v4'"):
+    with pytest.raises(ValueError, match="cannot resume.*prompt_version='poker-v4', not 'poker-v5'"):
         run(out, n_pairs=2)
     assert (out / "hands.jsonl").read_text() == before
     assert len(json.loads((out / "metadata.json").read_text())["sessions"]) == 1
@@ -280,7 +280,8 @@ def test_a_memory_run_logs_each_rewrite_after_the_hand_it_followed_with_its_call
     assert first["rewrite_prompt"].startswith("You are playing heads-up") and "hand 5:" in first["rewrite_prompt"]
     assert first["raw_response"] == NOTES_REPLY and first["verified_notes"][0]["text"] == "checks whenever it can"
     assert (first["latency_s"], first["eval_count"], first["prompt_tokens"], first["done_reason"]) == (0.5, 20, 900, "stop")
-    assert first["notes_block"].startswith('- "checks whenever it can" — evidence:')
+    assert first["notes_block"].startswith("- checked with no bet to face ")
+    assert "checks whenever it can" not in first["notes_block"]
 
 
 def test_decision_prompts_differ_from_the_plain_runs_only_by_the_notes_block_in_effect_and_log_its_version(tmp_path):

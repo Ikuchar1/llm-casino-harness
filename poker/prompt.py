@@ -22,14 +22,13 @@ from poker.engine import (
 #     (e.g. "raise_half_pot - your total this street becomes 6 chips (half the pot)"), the same
 #     wording whether or not a bet is owed.
 # v4: a call that uses all the remaining chips says so: "call - put in 74 more chips to match (all your chips)".
-PROMPT_VERSION = "poker-v4"
+# v5: the notes header no longer says the reads are quoted from the model: the harness writes
+#     every notes line (memory-v5). Prompts without notes are byte-identical to v4's.
+PROMPT_VERSION = "poker-v5"
 
 # The memory hook's block heading, the only one (poker.memory.render_notes_block writes the
 # lines under it). Prompts without notes never contain it.
-NOTES_HEADER = (
-    "Your notes on this opponent from earlier hands (the quoted reads are yours; "
-    "the evidence is counted by the harness):"
-)
+NOTES_HEADER = "Your notes on this opponent from earlier hands (each read is counted by the harness from what you saw):"
 
 _RANK_WORDS = {
     "2": "two", "3": "three", "4": "four", "5": "five", "6": "six", "7": "seven", "8": "eight",

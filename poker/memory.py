@@ -491,14 +491,18 @@ def evidence(opportunity_key: str, for_count: int, against_count: int) -> str:
 
 
 def shown_line(hypothesis: Hypothesis) -> str:
-    """A verified read as the decision prompt shows it: the model's text, then the harness's evidence."""
+    """A verified read as the decision prompt shows it, all harness-written: its key's evidence and status.
+
+    The model's text never reaches the decision prompt (it is logged only), so a read whose
+    words contradict its key can't put the contradiction in front of the model.
+    """
     counts = evidence(hypothesis.opportunity_key, hypothesis.for_count, hypothesis.against_count)
-    return f'"{hypothesis.text}" — evidence: {counts} — {hypothesis.status}'
+    return f"{counts} — {hypothesis.status}"
 
 
 # Fixed budget for the whole block in the prompt (poker.prompt's header included), so
 # memory-on prompts differ from memory-off only by this block.
-NOTES_BLOCK_CHAR_CAP = 1200  # fits 3 reads at the full WORD_BUDGET with their evidence lines
+NOTES_BLOCK_CHAR_CAP = 1200  # far more than 3 harness sentences need
 _NUDGE = (
     "CONFIRMED reads rest on enough opportunities to act on; "
     "TENTATIVE reads should only nudge your play, not override it."
@@ -506,7 +510,7 @@ _NUDGE = (
 
 
 def render_notes_block(notes: Notes) -> str:
-    """The capped notes lines and nudge for the decision prompt; empty while there are no notes.
+    """The notes lines and nudge for the decision prompt; empty while there are no notes.
 
     poker.prompt.notes_block puts NOTES_HEADER above it; the cap counts that header too.
     """
@@ -516,12 +520,8 @@ def render_notes_block(notes: Notes) -> str:
     lines: list[str] = []
     for hypothesis in notes.hypotheses:
         line = "- " + shown_line(hypothesis)
-        if len(line) + 1 > room:  # cut the text, never the evidence and status
-            tail = line[len('- "' + hypothesis.text):]
-            text_room = room - 1 - len('- "') - len(tail)
-            if text_room <= 0:
-                break
-            line = '- "' + hypothesis.text[:text_room] + tail
+        if len(line) + 1 > room:
+            break
         lines.append(line)
         room -= len(line) + 1
     return "\n".join([*lines, _NUDGE])
