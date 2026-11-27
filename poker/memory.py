@@ -551,7 +551,9 @@ class MemoryEvent:
     old_notes: list[dict[str, Any]]
     raw_response: Optional[str]
     parsed_notes: list[dict[str, Any]]  # as the parser read them (the old notes on parse_failed)
-    verified_notes: list[dict[str, Any]]  # true counts and harness-set status: the notes now in use
+    # True counts and harness-set status: the notes now in use. Each keeps the model's `text`
+    # (logged only) beside `shown_text`, the harness sentence the decision prompt shows instead.
+    verified_notes: list[dict[str, Any]]
     tally: dict[str, Any]  # OpponentTally.snapshot() at this rewrite
     flags: dict[str, bool]  # count_mismatch, unverifiable, unlisted_key, parse_failed, truncated, junk_lines, dropped_lines
     count_mismatches: list[dict[str, Any]]
@@ -569,6 +571,11 @@ class MemoryEvent:
 
 def _as_dicts(notes: Notes) -> list[dict[str, Any]]:
     return [dataclasses.asdict(hypothesis) for hypothesis in notes.hypotheses]
+
+
+def _shown_dicts(notes: Notes) -> list[dict[str, Any]]:
+    """Hypothesis dicts plus `shown_text`, the harness sentence the decision prompt shows in place of `text`."""
+    return [{**dataclasses.asdict(h), "shown_text": shown_line(h)} for h in notes.hypotheses]
 
 
 # ---------- MemoryState ----------
@@ -638,7 +645,7 @@ class MemoryState:
             old_notes=_as_dicts(old),
             raw_response=response,
             parsed_notes=_as_dicts(parsed.notes),
-            verified_notes=_as_dicts(checked.notes),
+            verified_notes=_shown_dicts(checked.notes),
             tally=self.tally.snapshot(),
             flags={
                 "count_mismatch": bool(checked.count_mismatches),
@@ -666,7 +673,10 @@ class MemoryState:
             raise ValueError(
                 f"memory event logged at {event['hands_seen']} committed hands, but {self.tally.hands} are committed"
             )
-        self.notes = Notes(tuple(Hypothesis(**hypothesis) for hypothesis in event["verified_notes"]))
+        fields = {field.name for field in dataclasses.fields(Hypothesis)}  # not the logged-only shown_text
+        self.notes = Notes(tuple(
+            Hypothesis(**{k: v for k, v in hypothesis.items() if k in fields}) for hypothesis in event["verified_notes"]
+        ))
         self._rewritten_through = self.tally.hands // REWRITE_EVERY
 
     def rewrite_prompt(self) -> str:

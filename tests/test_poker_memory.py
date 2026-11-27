@@ -739,6 +739,8 @@ def test_applying_a_rewrite_logs_old_raw_parsed_and_verified_notes_the_tally_and
     assert logged["verified_notes"][0] == {
         "text": "never folds to bets", "for_count": true_counts[0], "against_count": true_counts[1],
         "opportunity_key": "faced_bet.continue", "status": TENTATIVE,  # cited 3/0, so downgraded
+        "shown_text": f"continued (called or raised) when facing a bet {true_counts[0]} of {sum(true_counts)} times"
+                      " — TENTATIVE",
     }
     assert len(logged["verified_notes"]) == 1  # "bluffs a lot" cites no key, so it is not shown
     assert logged["parsed_notes"][1]["text"] == "bluffs a lot"
@@ -751,8 +753,25 @@ def test_applying_a_rewrite_logs_old_raw_parsed_and_verified_notes_the_tally_and
     assert logged["count_mismatches"][0]["cited"] == [3, 0]
     assert logged["unverifiable"] == ["bluffs a lot"]
     assert logged["junk_lines"] == ["Notes:"]
-    assert memory.notes == Notes(tuple(Hypothesis(**h) for h in logged["verified_notes"]))
+    assert memory.notes == Notes(tuple(
+        Hypothesis(**{k: v for k, v in h.items() if k != "shown_text"}) for h in logged["verified_notes"]
+    ))
     assert memory.notes_block().startswith("- continued (called or raised) when facing a bet")
+
+
+def test_the_memory_log_keeps_the_models_text_beside_the_harness_sentence_shown_for_each_read():
+    memory = rock_memory()
+    folds, others = memory.tally.counts("faced_bet.fold")
+    reply = f"never folds to any bet | key faced_bet.fold | for {folds} | against {others}"
+
+    logged = json.loads(memory.apply_rewrite(reply).to_json())
+
+    status = status_for("faced_bet.fold", folds, others)
+    read, = logged["verified_notes"]
+    assert logged["raw_response"] == reply
+    assert read["text"] == "never folds to any bet"
+    assert read["shown_text"] == f"folded when facing a bet {folds} of {folds + others} times — {status}"
+    assert f"- {read['shown_text']}" in memory.notes_block().splitlines()
 
 
 def test_a_rewrite_that_does_not_parse_keeps_the_old_reads_re_verified_against_the_current_tally():
@@ -773,7 +792,10 @@ def test_a_rewrite_that_does_not_parse_keeps_the_old_reads_re_verified_against_t
     assert event.flags["parse_failed"] and not event.flags["count_mismatch"]
     assert event.old_notes == event.parsed_notes == [dataclasses.asdict(h) for h in kept.hypotheses]
     assert memory.notes == Notes((Hypothesis("plays every hand", *now, "preflop.vpip", CONFIRMED),))
-    assert event.verified_notes == [dataclasses.asdict(h) for h in memory.notes.hypotheses]
+    assert event.verified_notes == [
+        {**dataclasses.asdict(h), "shown_text": f"put money in voluntarily preflop {now[0]} of {sum(now)} hands — CONFIRMED"}
+        for h in memory.notes.hypotheses
+    ]
 
 
 def test_a_rewrite_that_does_not_parse_drops_an_old_read_whose_key_is_no_longer_listed_and_logs_it():
